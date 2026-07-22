@@ -23,8 +23,8 @@ jobs:
     name: Linux AppImage
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with:
           node-version: 22
       # repack-appimage.js repacks the AppImage; it prefers electron-builder's
@@ -44,7 +44,7 @@ jobs:
         working-directory: desktop
         run: npm run build:linux
       - name: Attach AppImage to the release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           files: desktop/dist/*.AppImage
           fail_on_unmatched_files: true
@@ -53,8 +53,8 @@ jobs:
     name: Windows installer
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with:
           node-version: 22
       - name: Set version from the release tag
@@ -70,7 +70,7 @@ jobs:
         working-directory: desktop
         run: npm run build:win
       - name: Attach installer to the release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           files: desktop/dist/*.exe
           fail_on_unmatched_files: true
