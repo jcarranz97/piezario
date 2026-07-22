@@ -12,7 +12,7 @@
 // user's catalog.yaml, and Next resolves models/ fonts/ icons/ relative to it.
 
 const { app, BrowserWindow, dialog, Menu, shell } = require("electron");
-const { spawn } = require("node:child_process");
+const { spawn, execFileSync } = require("node:child_process");
 
 // Run without Chromium's sandbox. An AppImage mounts read-only, so its
 // `chrome-sandbox` helper can't be root:4755, and modern Ubuntu/GNOME also
@@ -22,6 +22,32 @@ const { spawn } = require("node:child_process");
 // loads its OWN localhost server, never untrusted web content, so the sandbox
 // (which exists to contain hostile web pages) protects nothing.
 app.commandLine.appendSwitch("no-sandbox");
+
+// Match the desktop's scaling so Piezario doesn't look smaller than it did in
+// the browser. Two separate GNOME settings cause the mismatch:
+//   1. Fractional DISPLAY scaling (e.g. 125%). Electron defaults to XWayland,
+//      which ignores it; asking Ozone to use the native Wayland backend when
+//      available (falling back to X11 otherwise) makes it honor the compositor.
+//   2. TEXT scaling factor (Settings → Accessibility → Large Text, or any
+//      value ≠ 1). GTK apps and Firefox apply it globally; Electron does not.
+//      We read it below and apply it as the window's zoom factor.
+app.commandLine.appendSwitch("ozone-platform-hint", "auto");
+
+// GNOME's text-scaling-factor (1.0 when unset). Best-effort, Linux/GNOME only.
+function desktopTextScale() {
+  if (process.platform !== "linux") return 1;
+  try {
+    const out = execFileSync(
+      "gsettings",
+      ["get", "org.gnome.desktop.interface", "text-scaling-factor"],
+      { encoding: "utf8" },
+    );
+    const factor = parseFloat(out.trim());
+    return Number.isFinite(factor) && factor > 0 ? factor : 1;
+  } catch {
+    return 1;
+  }
+}
 const http = require("node:http");
 const net = require("node:net");
 const fs = require("node:fs");
@@ -232,6 +258,15 @@ function createWindow(port) {
     }
     return { action: "allow" };
   });
+
+  // Apply GNOME's text-scaling factor as zoom so text matches the browser.
+  // Re-applied on every load because a fresh navigation resets the zoom.
+  const textScale = desktopTextScale();
+  if (textScale !== 1) {
+    mainWindow.webContents.on("did-finish-load", () => {
+      mainWindow.webContents.setZoomFactor(textScale);
+    });
+  }
 
   mainWindow.loadURL(`http://127.0.0.1:${port}/`);
   mainWindow.on("closed", () => {
