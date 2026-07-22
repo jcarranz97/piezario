@@ -7,7 +7,7 @@ import { getSupplies } from "@/lib/inventory";
 export const dynamic = "force-dynamic";
 
 export const metadata: Metadata = {
-  title: "Supplies — 3D Catalog",
+  title: "Supplies — Piezario",
   description:
     "Non-printed consumables — rings, chains, glue — priced per unit for your parts.",
 };

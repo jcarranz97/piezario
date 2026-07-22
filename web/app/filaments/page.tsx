@@ -9,7 +9,7 @@ import { getFilaments } from "@/lib/inventory";
 export const dynamic = "force-dynamic";
 
 export const metadata: Metadata = {
-  title: "Filaments — 3D Catalog",
+  title: "Filaments — Piezario",
   description: "Your filament spools, and the prices that cost your prints.",
 };
 

@@ -8,7 +8,7 @@ import { getIcons, iconsRoot } from "@/lib/icons";
 export const dynamic = "force-dynamic";
 
 export const metadata: Metadata = {
-  title: "Icons — 3D Catalog",
+  title: "Icons — Piezario",
   description: "The SVG icons reused across the designs, browsable with previews.",
 };
 

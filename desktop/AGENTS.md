@@ -75,8 +75,18 @@ fires in early native startup, before `main.js` runs:
    electron-builder does not touch AppRun, so without this, terminal launches
    would still crash.
 
-## Not yet done
+## Windows installer
 
-- **Windows `.exe`**: add `win.target: nsis` to `build` in `package.json` and
-  build on Windows or a GitHub Actions Windows runner (cross-building NSIS from
-  Linux via wine is unreliable).
+`npm run build:win` builds the NSIS `.exe` (config under `build.win` / `build.nsis`
+in `package.json`). It runs `build:web` → `stage` → `electron-builder --win nsis`
+— **without** the `repack` step, which is AppImage-only. The same `main.js`
+already works on Windows: the Wayland/sandbox tweaks are Linux-guarded, and the
+server spawn (`process.execPath` + `ELECTRON_RUN_AS_NODE`) is cross-platform.
+
+**Build it on Windows, not here.** Cross-building NSIS from Linux via wine is
+unreliable, so `.github/workflows/release.yml` builds the `.exe` on a
+`windows-latest` runner (and the AppImage on `ubuntu-latest`). It runs when a
+GitHub **Release** is published: it stamps both installers with the release tag's
+version (`npm version` from `${GITHUB_REF_NAME}`, `v` stripped) and uploads them
+onto that release via `softprops/action-gh-release`. Cut a release from the
+Releases page with a tag like `v0.1.0` and both files appear on it.

@@ -1,0 +1,76 @@
+name: Release
+
+# Builds the installers and attaches them to a GitHub Release.
+#
+# How to cut a release:
+#   1. Go to https://github.com/jcarranz97/piezario/releases → "Draft a new
+#      release".
+#   2. Create a tag like `v0.1.0` (the leading `v` is stripped for the version).
+#   3. Publish the release.
+# This workflow then builds the Linux AppImage (on Linux) and the Windows .exe
+# (on Windows), names both after the tag version, and uploads them to that same
+# release — so they can be downloaded straight from the releases page.
+on:
+  release:
+    types: [published]
+
+# Needed so the workflow can upload assets onto the release.
+permissions:
+  contents: write
+
+jobs:
+  linux:
+    name: Linux AppImage
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      # repack-appimage.js repacks the AppImage; it prefers electron-builder's
+      # cached mksquashfs but falls back to the system one.
+      - name: Install squashfs-tools
+        run: sudo apt-get update && sudo apt-get install -y squashfs-tools
+      - name: Set version from the release tag
+        shell: bash
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          echo "Building version $VERSION"
+          npm --prefix desktop version "$VERSION" --no-git-tag-version --allow-same-version
+      - name: Install desktop deps
+        working-directory: desktop
+        run: npm install
+      - name: Build AppImage
+        working-directory: desktop
+        run: npm run build:linux
+      - name: Attach AppImage to the release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: desktop/dist/*.AppImage
+          fail_on_unmatched_files: true
+
+  windows:
+    name: Windows installer
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Set version from the release tag
+        shell: bash
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          echo "Building version $VERSION"
+          npm --prefix desktop version "$VERSION" --no-git-tag-version --allow-same-version
+      - name: Install desktop deps
+        working-directory: desktop
+        run: npm install
+      - name: Build NSIS installer
+        working-directory: desktop
+        run: npm run build:win
+      - name: Attach installer to the release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: desktop/dist/*.exe
+          fail_on_unmatched_files: true

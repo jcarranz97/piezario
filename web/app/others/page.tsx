@@ -6,7 +6,7 @@ import { loadConfig } from "@/lib/config";
 export const dynamic = "force-dynamic";
 
 export const metadata: Metadata = {
-  title: "Others — 3D Catalog",
+  title: "Others — Piezario",
   description: "Cost settings: spool price, machine rate, tax and markup.",
 };
 

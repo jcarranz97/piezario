@@ -60,7 +60,9 @@ npm install
 npm run dev            # opens the Electron window against `next dev`
 ```
 
-## Building the Linux AppImage
+## Building the installers
+
+Linux AppImage (builds natively on Linux):
 
 ```bash
 cd desktop
@@ -69,9 +71,27 @@ npm run build:linux
 # → desktop/dist/Piezario-*.AppImage
 ```
 
-`build:linux` builds the catalog in **standalone** mode, stages the
-self-contained Next server (`stage.js`), and runs `electron-builder`. Windows
-`.exe` support is planned but not wired up yet.
+`build:linux` builds the web app in **standalone** mode, stages the
+self-contained Next server (`stage.js`), runs `electron-builder`, then repacks
+the AppImage (`repack-appimage.js`).
+
+## Releasing (both installers, from GitHub)
+
+The `.github/workflows/release.yml` GitHub Action builds **both** installers and
+attaches them to a Release, so you never need a Windows machine:
+
+1. Go to the repo's **Releases** page → **Draft a new release**.
+2. Create a tag like **`v0.1.0`** (the leading `v` is stripped for the version).
+3. **Publish** the release.
+
+The action then builds the AppImage on Linux and the `.exe` on Windows, names
+both after the tag (e.g. `Piezario-0.1.0.AppImage`, `Piezario Setup 0.1.0.exe`),
+and uploads them to that release — downloadable straight from the releases page.
+
+(For a purely local Linux build without a release, `npm run build:linux` still
+works, as above. A local Windows build needs `npm run build:win` **on Windows**;
+cross-building from Linux is unreliable, which is why the Windows `.exe` is left
+to CI.)
 
 ## How it works
 

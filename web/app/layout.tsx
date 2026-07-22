@@ -9,8 +9,8 @@ import { Providers } from "./providers";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "3D Catalog",
-  description: "A catalog of my 3D models, generated from the repository itself.",
+  title: "Piezario",
+  description: "Organize your 3D-model catalog and price your prints.",
 };
 
 export default function RootLayout({
@@ -27,7 +27,7 @@ export default function RootLayout({
                 className="flex shrink-0 items-center gap-2 font-semibold tracking-tight"
               >
                 <LuBox className="size-5 text-[var(--accent-strong)]" />
-                3D Catalog
+                Piezario
               </Link>
               <NavTabs />
               <div className="ml-auto">

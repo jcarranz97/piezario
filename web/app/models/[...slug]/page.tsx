@@ -34,7 +34,7 @@ export async function generateMetadata({
   params: Promise<{ slug: string[] }>;
 }): Promise<Metadata> {
   const model = await resolveModel(params);
-  return { title: model ? `${model.title} — 3D Catalog` : "Not found" };
+  return { title: model ? `${model.title} — Piezario` : "Not found" };
 }
 
 export default async function ModelPage({

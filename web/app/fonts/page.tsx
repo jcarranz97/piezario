@@ -8,7 +8,7 @@ import { fontFaceCss, fontsRoot, getFonts } from "@/lib/fonts";
 export const dynamic = "force-dynamic";
 
 export const metadata: Metadata = {
-  title: "Fonts — 3D Catalog",
+  title: "Fonts — Piezario",
   description: "The fonts available to the model generators, with live previews.",
 };
 
