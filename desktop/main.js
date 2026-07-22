@@ -13,6 +13,15 @@
 
 const { app, BrowserWindow, dialog, Menu, shell } = require("electron");
 const { spawn } = require("node:child_process");
+
+// Run without Chromium's sandbox. An AppImage mounts read-only, so its
+// `chrome-sandbox` helper can't be root:4755, and modern Ubuntu/GNOME also
+// restrict the namespace-sandbox fallback via AppArmor — either way Electron
+// would refuse to start on many end-user machines. Disabling the sandbox is the
+// standard fix for a distributable AppImage and is safe here: Piezario only
+// loads its OWN localhost server, never untrusted web content, so the sandbox
+// (which exists to contain hostile web pages) protects nothing.
+app.commandLine.appendSwitch("no-sandbox");
 const http = require("node:http");
 const net = require("node:net");
 const fs = require("node:fs");

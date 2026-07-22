@@ -55,6 +55,26 @@ npm run build:linux   # build catalog (standalone) → stage → electron-builde
 
 Output: `dist/Piezario-*.AppImage`.
 
+## The Chromium sandbox
+
+Electron aborts at startup on many end-user machines with a
+`setuid_sandbox_host` FATAL: an AppImage mounts read-only so its `chrome-sandbox`
+can't be root:4755, and modern Ubuntu/GNOME also restrict the namespace-sandbox
+fallback via AppArmor. The fix is to run with `--no-sandbox` — safe here because
+Piezario only loads its own localhost server, never untrusted web content.
+
+Passing it reliably takes **three** layers, because the setuid-sandbox check
+fires in early native startup, before `main.js` runs:
+
+1. `main.js` calls `app.commandLine.appendSwitch("no-sandbox")` — covers dev
+   runs and child processes (not sufficient alone for the packaged main process).
+2. `package.json` → `build.linux.executableArgs: ["--no-sandbox"]` — bakes the
+   flag into the generated `.desktop` entry (menu / double-click launches).
+3. `repack-appimage.js` (the `repack` step in `build:linux`) patches the
+   AppImage's `AppRun` so a plain `./Piezario.AppImage` also passes the flag.
+   electron-builder does not touch AppRun, so without this, terminal launches
+   would still crash.
+
 ## Not yet done
 
 - **Windows `.exe`**: add `win.target: nsis` to `build` in `package.json` and

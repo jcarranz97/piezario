@@ -8,7 +8,8 @@
     "dev": "NEXT_DEV=1 electron .",
     "build:catalog": "npm --prefix ../catalog install && npm --prefix ../catalog run build",
     "stage": "node stage.js",
-    "build:linux": "npm run build:catalog && npm run stage && electron-builder --linux AppImage"
+    "repack": "node repack-appimage.js",
+    "build:linux": "npm run build:catalog && npm run stage && electron-builder --linux AppImage && npm run repack"
   },
   "devDependencies": {
     "electron": "^33.0.0",
@@ -37,7 +38,10 @@
         "AppImage"
       ],
       "category": "Graphics",
-      "icon": "build/icon.png"
+      "icon": "build/icon.png",
+      "executableArgs": [
+        "--no-sandbox"
+      ]
     }
   }
 }
