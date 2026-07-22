@@ -23,15 +23,29 @@ const { spawn, execFileSync } = require("node:child_process");
 // (which exists to contain hostile web pages) protects nothing.
 app.commandLine.appendSwitch("no-sandbox");
 
-// Match the desktop's scaling so Piezario doesn't look smaller than it did in
-// the browser. Two separate GNOME settings cause the mismatch:
-//   1. Fractional DISPLAY scaling (e.g. 125%). Electron defaults to XWayland,
-//      which ignores it; asking Ozone to use the native Wayland backend when
-//      available (falling back to X11 otherwise) makes it honor the compositor.
-//   2. TEXT scaling factor (Settings → Accessibility → Large Text, or any
-//      value ≠ 1). GTK apps and Firefox apply it globally; Electron does not.
-//      We read it below and apply it as the window's zoom factor.
-app.commandLine.appendSwitch("ozone-platform-hint", "auto");
+// Use native Wayland when we're in a Wayland session.
+//
+// Electron otherwise runs under XWayland, and on a fractional-scaled or
+// ultrawide display XWayland can expose a bogus low virtual refresh rate
+// (e.g. a 10240×2880 framebuffer reported at ~24 Hz). Electron then paints at
+// that rate, so scrolling and animations stutter badly — while the user's
+// browser, on native Wayland, runs at the display's true (high) refresh and
+// looks smooth. Forcing the Wayland backend fixes both the refresh rate and
+// fractional DISPLAY scaling in one go. We fall back to the default (X11) on
+// non-Wayland sessions so the same AppImage still runs everywhere.
+//
+// (TEXT scaling — Settings → Accessibility → Large Text — is separate; GTK apps
+// and browsers apply it but Electron does not, so desktopTextScale() below
+// reads it and applies it as the window zoom.)
+const isWaylandSession =
+  process.platform === "linux" &&
+  (process.env.XDG_SESSION_TYPE === "wayland" || Boolean(process.env.WAYLAND_DISPLAY));
+if (isWaylandSession) {
+  app.commandLine.appendSwitch("ozone-platform", "wayland");
+  // Ensure GNOME (client-side decorations) still gives the window a title bar
+  // and resize borders under the Wayland backend.
+  app.commandLine.appendSwitch("enable-features", "WaylandWindowDecorations");
+}
 
 // GNOME's text-scaling-factor (1.0 when unset). Best-effort, Linux/GNOME only.
 function desktopTextScale() {
