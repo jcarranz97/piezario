@@ -1,0 +1,135 @@
+@import "tailwindcss";
+@import "@heroui/styles";
+
+:root {
+  --background: #fafaf9;
+  --foreground: #1a1a1a;
+  --accent: #ea580c;
+  --accent-strong: #c2410c;
+  --muted: #6b7280;
+  --card: #ffffff;
+  --card-border: #e5e7eb;
+  --grid-line: #e7e5e4;
+  /* Sidebar tokens, from the Claude Design mock: a filled state for the
+     selected row, a lighter one for hover, plus a dimmer-than-muted grey for
+     labels and a neutral pill for the counts. */
+  --accent-soft: #fbe9dc;
+  --accent-tint: #fbf2eb;
+  --faint: #a8a29b;
+  --chip: #efeae4;
+}
+
+[data-theme="dark"] {
+  --background: #0a0a0a;
+  --foreground: #f5f5f5;
+  --accent: #fb923c;
+  --accent-strong: #f97316;
+  --muted: #9ca3af;
+  --card: #171717;
+  --card-border: #262626;
+  --grid-line: #1c1917;
+  --accent-soft: #3a2717;
+  --accent-tint: #26211d;
+  --faint: #7c736a;
+  --chip: #312d29;
+}
+
+html,
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family:
+    -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen, Ubuntu,
+    Cantarell, sans-serif;
+}
+
+.text-muted {
+  color: var(--muted);
+}
+
+/* Placeholder tile for models with no image yet: a faint build-plate grid, so
+   an un-thumbnailed model still reads as a card rather than a blank hole. */
+.build-plate {
+  background-color: var(--card);
+  background-image:
+    linear-gradient(to right, var(--grid-line) 1px, transparent 1px),
+    linear-gradient(to bottom, var(--grid-line) 1px, transparent 1px);
+  background-size: 16px 16px;
+}
+
+/* README rendering. HeroUI styles reset headings, so the model page opts back
+   in to document-ish typography just for the markdown body. */
+.readme > * + * {
+  margin-top: 1rem;
+}
+.readme h1,
+.readme h2,
+.readme h3 {
+  font-weight: 600;
+  line-height: 1.3;
+  margin-top: 2rem;
+}
+.readme h1 {
+  font-size: 1.5rem;
+}
+.readme h2 {
+  font-size: 1.25rem;
+}
+.readme h3 {
+  font-size: 1.05rem;
+}
+.readme p,
+.readme li {
+  line-height: 1.7;
+}
+.readme ul,
+.readme ol {
+  padding-left: 1.5rem;
+}
+.readme ul {
+  list-style: disc;
+}
+.readme ol {
+  list-style: decimal;
+}
+.readme a {
+  color: var(--accent-strong);
+  text-decoration: underline;
+}
+.readme code {
+  background: color-mix(in srgb, var(--muted) 18%, transparent);
+  border-radius: 0.25rem;
+  padding: 0.1rem 0.35rem;
+  font-size: 0.875em;
+}
+.readme pre {
+  background: color-mix(in srgb, var(--muted) 14%, transparent);
+  border-radius: 0.75rem;
+  padding: 1rem;
+  overflow-x: auto;
+}
+.readme pre code {
+  background: none;
+  padding: 0;
+}
+.readme blockquote {
+  border-left: 3px solid var(--card-border);
+  padding-left: 1rem;
+  color: var(--muted);
+}
+.readme table {
+  width: 100%;
+  border-collapse: collapse;
+  display: block;
+  overflow-x: auto;
+}
+.readme th,
+.readme td {
+  border: 1px solid var(--card-border);
+  padding: 0.5rem 0.75rem;
+  text-align: left;
+}
+.readme img {
+  max-width: 100%;
+  border-radius: 0.75rem;
+}

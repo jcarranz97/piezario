@@ -1,0 +1,16 @@
+# --- Node / Next.js -------------------------------------------------------
+node_modules/
+.next/
+out/
+*.tsbuildinfo
+.env*.local
+
+# --- Electron build -------------------------------------------------------
+desktop/staging/
+desktop/dist/
+
+# --- Python (thumbnail CLI, dev-only) -------------------------------------
+__pycache__/
+*.py[cod]
+.venv/
+venv/

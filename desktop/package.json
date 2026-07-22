@@ -1,0 +1,43 @@
+{
+  "name": "piezario-desktop",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Electron shell for Piezario — runs the Next.js catalog as a desktop app.",
+  "main": "main.js",
+  "scripts": {
+    "dev": "NEXT_DEV=1 electron .",
+    "build:catalog": "npm --prefix ../catalog install && npm --prefix ../catalog run build",
+    "stage": "node stage.js",
+    "build:linux": "npm run build:catalog && npm run stage && electron-builder --linux AppImage"
+  },
+  "devDependencies": {
+    "electron": "^33.0.0",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "com.piezario.app",
+    "productName": "Piezario",
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "staging/app-server",
+        "to": "app-server"
+      }
+    ],
+    "linux": {
+      "target": [
+        "AppImage"
+      ],
+      "category": "Graphics",
+      "icon": "build/icon.png"
+    }
+  }
+}
