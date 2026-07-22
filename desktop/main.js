@@ -203,9 +203,9 @@ async function startServer(catalogDir, port) {
   };
 
   if (IS_DEV) {
-    // Dev: run the catalog's own dev server (needs Node/npm on the dev machine).
+    // Dev: run the web app's own dev server (needs Node/npm on the dev machine).
     serverProc = spawn("npm", ["run", "dev"], {
-      cwd: path.join(__dirname, "..", "catalog"),
+      cwd: path.join(__dirname, "..", "web"),
       env,
       stdio: "inherit",
     });

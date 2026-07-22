@@ -6,9 +6,9 @@ separate folder the user chooses** (e.g. the `3d-catalog` repo). Piezario reads
 that folder off disk and renders it — the same relationship `mkdocs` has with
 `docs/`. There is no database, no import step and no admin panel.
 
-The app is a Next.js web app (`catalog/`) wrapped in an Electron shell
+The app is a Next.js web app (`web/`) wrapped in an Electron shell
 (`desktop/`) so it ships as a single AppImage — no Node, npm or terminal for the
-end user. See `catalog/AGENTS.md` for the app internals and `desktop/AGENTS.md`
+end user. See `web/AGENTS.md` for the app internals and `desktop/AGENTS.md`
 for the packaging.
 
 The app has six tabs. The first three are folder-driven — the same rule drives
@@ -41,7 +41,7 @@ runs locally; there is no backend service.
 ## Quick Start (development)
 
 ```bash
-cd catalog
+cd web
 npm install
 CATALOG_CONFIG=/path/to/3d-catalog/catalog.yaml npm run dev   # http://localhost:3000
 ```
@@ -55,7 +55,7 @@ refreshing is enough — no restart, no rebuild.
 ## Where the catalog lives
 
 The whole catalog is wired from **one environment variable**: `CATALOG_CONFIG`
-points at a `catalog.yaml`, and `loadConfig()` (`catalog/lib/config.ts`)
+points at a `catalog.yaml`, and `loadConfig()` (`web/lib/config.ts`)
 resolves `models/`, `fonts/` and `icons/` relative to that file's folder. In the
 desktop app, `desktop/main.js` sets `CATALOG_CONFIG` from the folder the user
 picks on first launch (**File → Change catalog folder…** changes it).
@@ -69,7 +69,7 @@ categories.** `models/keychains/ysisi-nametag/` is the model *Ysisi nametag* in
 the category *keychains*. Nesting depth is arbitrary.
 
 This rule lives in two places that **must stay in sync**: `walk()` in
-`catalog/lib/catalog.ts` and `is_model_dir()` in `catalog/scripts/thumbnail.py`.
+`web/lib/catalog.ts` and `is_model_dir()` in `web/scripts/thumbnail.py`.
 Both read their exclusion list from the same `catalog.yaml`.
 
 `catalog.yaml` holds the settings conventions can't infer — `models_dir`,
@@ -96,12 +96,12 @@ Optional YAML frontmatter at the top of a model's `README.md`. **Every field is
 optional** — a folder with no README still appears, just with less on its card.
 The full field list and the cost model (landed cost = raw materials + purchased
 materials + packaging + labor + machine, then markup and tax) are documented in
-`catalog/AGENTS.md`, which is authoritative for app internals.
+`web/AGENTS.md`, which is authoritative for app internals.
 
 ## Structure
 
 ```text
-catalog/                 # the Next.js app (reads the catalog folder, renders it)
+web/                     # the Next.js app (reads the catalog folder, renders it)
 ├── app/                 # App Router pages + the file-serving routes
 ├── components/          # catalog/ · model/ · fonts/ · icons/ · layout/
 ├── lib/                 # catalog.ts · config.ts · fonts.ts · icons.ts · cost.ts …
@@ -115,7 +115,7 @@ desktop/                 # Electron shell → AppImage (see desktop/AGENTS.md)
 ## Desktop packaging
 
 Piezario is a **server-side** app (it reads the tree with `node:fs`, spawns the
-file manager via `catalog/lib/open.ts`, and writes back to READMEs and
+file manager via `web/lib/open.ts`, and writes back to READMEs and
 `catalog.yaml`), so it cannot be exported as static HTML. The desktop build runs
 the **real Next server** built with `output: "standalone"`, launched from
 `desktop/main.js` using Electron's own bundled Node
@@ -131,19 +131,19 @@ runtime. The window loads `http://127.0.0.1:<port>`. Details in
   while the server runs; a cached render would show stale content. No
   `generateStaticParams`, no ISR — and no static export (the app needs a live
   Node server, which is exactly what the Electron build provides).
-- **`catalog/` has no dependency on any particular catalog.** It reads whatever
+- **`web/` has no dependency on any particular catalog.** It reads whatever
   `CATALOG_CONFIG` points at. That is what lets Piezario be pointed at any
   models folder without a code change.
 - The remaining app-internal constraints (the file-serving containment check,
   `lib/urls.ts` path encoding, `lib/open.ts` no-shell spawn, gitignored
   binaries, frontmatter `Date` handling, HeroUI v3 notes, the 3MF tool checker,
-  thumbnails) are documented in **`catalog/AGENTS.md`** — read it before
+  thumbnails) are documented in **`web/AGENTS.md`** — read it before
   touching the app.
 
 ## Validation Checklist
 
 ```bash
-cd catalog
+cd web
 npx tsc --noEmit
 npm run build
 ```

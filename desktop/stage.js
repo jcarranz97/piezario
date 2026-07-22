@@ -1,23 +1,23 @@
 // Assemble the self-contained Next server that gets bundled into the AppImage.
 //
 // `next build` (with output: "standalone") leaves the server in
-// ../catalog/.next/standalone but, by Next's design, does NOT copy the static
+// ../web/.next/standalone but, by Next's design, does NOT copy the static
 // assets or a public/ folder into it — that is the caller's job. We gather
 // everything into desktop/staging/app-server, which electron-builder then ships
 // as an extraResource. main.js runs staging/app-server/server.js at runtime.
 const fs = require("node:fs");
 const path = require("node:path");
 
-const catalog = path.join(__dirname, "..", "catalog");
-const standalone = path.join(catalog, ".next", "standalone");
-const staticDir = path.join(catalog, ".next", "static");
+const webApp = path.join(__dirname, "..", "web");
+const standalone = path.join(webApp, ".next", "standalone");
+const staticDir = path.join(webApp, ".next", "static");
 const staging = path.join(__dirname, "staging");
 const out = path.join(staging, "app-server");
 
 if (!fs.existsSync(standalone)) {
   console.error(
-    `[stage] ${standalone} not found — run the catalog build first ` +
-      `(npm run build:catalog).`,
+    `[stage] ${standalone} not found — run the web build first ` +
+      `(npm run build:web).`,
   );
   process.exit(1);
 }
@@ -37,7 +37,7 @@ fs.cpSync(staticDir, path.join(out, ".next", "static"), { recursive: true });
 if (!fs.existsSync(path.join(out, "server.js"))) {
   console.error(
     `[stage] server.js not found in ${out}. The standalone layout is ` +
-      `unexpected — check outputFileTracingRoot in catalog/next.config.ts.`,
+      `unexpected — check outputFileTracingRoot in web/next.config.ts.`,
   );
   process.exit(1);
 }

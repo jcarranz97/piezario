@@ -33,10 +33,10 @@ folder…**.
 ## Layout
 
 ```text
-catalog/     The Next.js 16 + React 19 + HeroUI v3 app (the catalog itself).
+web/         The Next.js 16 + React 19 + HeroUI v3 app (the catalog itself).
              Reads the catalog folder off disk and renders it. See
-             catalog/AGENTS.md for how it works.
-desktop/     The Electron shell that turns catalog/ into a desktop app and
+             web/AGENTS.md for how it works.
+desktop/     The Electron shell that turns web/ into a desktop app and
              packages it into an AppImage. See desktop/AGENTS.md.
 ```
 
@@ -45,7 +45,7 @@ desktop/     The Electron shell that turns catalog/ into a desktop app and
 Run the app in the browser (fastest iteration):
 
 ```bash
-cd catalog
+cd web
 npm install
 npm run dev            # http://localhost:3000
 # point it at a catalog folder with an env var:

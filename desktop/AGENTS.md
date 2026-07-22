@@ -1,12 +1,12 @@
 # Desktop shell
 
-Turns the Next.js app in `../catalog` into a Linux desktop app (AppImage).
+Turns the Next.js app in `../web` into a Linux desktop app (AppImage).
 Everything here is the packaging layer — no catalog logic lives in `desktop/`.
 
 ## Why a server, not static HTML
 
 Piezario is a real server-side app: it reads the models tree with `node:fs`,
-spawns the file manager (`../catalog/lib/open.ts`), and writes back to READMEs
+spawns the file manager (`../web/lib/open.ts`), and writes back to READMEs
 and `catalog.yaml`. Static export would drop all of that. So the desktop build
 **runs the production Next server** and points a window at it.
 
@@ -35,14 +35,14 @@ reloads.
 ## The one gotcha: staging
 
 `next build` with `output: "standalone"` leaves the server in
-`../catalog/.next/standalone` but, by Next's design, does **not** copy the static
+`../web/.next/standalone` but, by Next's design, does **not** copy the static
 assets into it. `stage.js` assembles the shippable server into
 `staging/app-server/`: the standalone tree plus `.next/static` copied to
 `<server>/.next/static`. (There is no `public/` folder in this app.)
 electron-builder ships `staging/app-server` as an `extraResource`, and `main.js`
 resolves it at `process.resourcesPath/app-server/server.js` when packaged.
 
-`catalog/next.config.ts` pins `outputFileTracingRoot` to the catalog folder so
+`web/next.config.ts` pins `outputFileTracingRoot` to the web-app folder so
 `server.js` always lands at the root of the standalone tree — don't remove it,
 or the staged path breaks.
 
@@ -50,7 +50,7 @@ or the staged path breaks.
 
 ```bash
 npm run dev           # Electron over `next dev` (needs Node on the dev machine)
-npm run build:linux   # build catalog (standalone) → stage → electron-builder → AppImage
+npm run build:linux   # build web (standalone) → stage → electron-builder → AppImage
 ```
 
 Output: `dist/Piezario-*.AppImage`.
