@@ -1,0 +1,60 @@
+# Example catalog for the test suite. This mirrors the shape of a real
+# catalog.yaml and carries comments on purpose: the inventory-write tests
+# assert that every one of these comments survives an edit.
+
+models_dir: models
+fonts_dir: fonts
+icons_dir: icons
+
+# A folder with subfolders is a category; these are never content.
+exclude:
+  - node_modules
+  - scratch
+
+# Where generators drop their meshes — output, not a model of its own.
+output_dirs:
+  - out
+
+# The landed-cost knobs (Print Farm Academy method).
+cost:
+  currency: "$"
+  filament_per_kg: 20 # default spool price when a material has no own rate
+  filament_per_kg_by_type:
+    PLA: 18
+    PETG: 25
+  failure_risk:
+    low: 1.1
+    medium: 1.3
+    high: 1.7
+  printer_price: 500
+  maintenance_cost: 100
+  lifespan_hours: 5000
+  power_watts: 120
+  electricity_per_kwh: 0.15
+  labor_per_hour: 20
+  shipping_cost: 2
+  tax_percent: 8
+  markup_percent: 50
+
+# Your spools. A model prices against one of these by id.
+filaments:
+  - id: pla-black
+    name: PLA Basic Black
+    material: PLA
+    brand: Bambu Lab
+    colors:
+      - name: Black
+        hex: "#000000"
+    price_per_kg: 18
+  - id: petg-clear
+    name: PETG Clear
+    material: PETG
+    price_per_kg: 25
+
+# Consumables that aren't printed.
+supplies:
+  - id: keyring
+    name: Key ring 25mm
+    unit: piece
+    price: 0.1
+    category: Hardware
