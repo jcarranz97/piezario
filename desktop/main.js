@@ -23,6 +23,19 @@ const { spawn, execFileSync } = require("node:child_process");
 // (which exists to contain hostile web pages) protects nothing.
 app.commandLine.appendSwitch("no-sandbox");
 
+// Run the GPU pipeline inside the main process instead of a separate GPU
+// process. On some Linux desktops (observed on a fresh Ubuntu 26.04 / GNOME
+// Wayland session with this Electron's bundled GPU stack) the out-of-process
+// GPU compositor wedges: the page renders fully in the DOM but the compositor
+// never produces a painted frame, so the window shows only its background — a
+// blank screen. `--disable-gpu` does NOT fix it (the compositor still stalls);
+// running the GPU in-process does. The cost is negligible for a local catalog
+// browser, and it makes the distributed AppImage paint reliably across the wide
+// range of end-user Linux machines Piezario has to run on unmodified.
+if (process.platform === "linux") {
+  app.commandLine.appendSwitch("in-process-gpu");
+}
+
 // Use native Wayland when we're in a Wayland session.
 //
 // Electron otherwise runs under XWayland, and on a fractional-scaled or
