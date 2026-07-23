@@ -5,6 +5,14 @@ out/
 *.tsbuildinfo
 .env*.local
 
+# --- Test output ----------------------------------------------------------
+coverage/
+.pytest_cache/
+
+# The test fixture vault must be committed verbatim — including its `out/`
+# folder, which the global `out/` rule above would otherwise drop.
+!web/tests/fixtures/**/out/
+
 # --- Electron build -------------------------------------------------------
 desktop/staging/
 desktop/dist/

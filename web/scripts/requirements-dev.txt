@@ -1,0 +1,5 @@
+# Dependencies for running the thumbnail generator's test suite.
+# (matplotlib is only needed to actually render images, not to run these tests.)
+numpy
+pyyaml
+pytest
