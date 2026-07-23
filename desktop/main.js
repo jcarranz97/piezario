@@ -23,29 +23,27 @@ const { spawn, execFileSync } = require("node:child_process");
 // (which exists to contain hostile web pages) protects nothing.
 app.commandLine.appendSwitch("no-sandbox");
 
-// Run the GPU pipeline inside the main process instead of a separate GPU
-// process. On some Linux desktops (observed on a fresh Ubuntu 26.04 / GNOME
-// Wayland session with this Electron's bundled GPU stack) the out-of-process
-// GPU compositor wedges: the page renders fully in the DOM but the compositor
-// never produces a painted frame, so the window shows only its background — a
-// blank screen. `--disable-gpu` does NOT fix it (the compositor still stalls);
-// running the GPU in-process does. The cost is negligible for a local catalog
-// browser, and it makes the distributed AppImage paint reliably across the wide
-// range of end-user Linux machines Piezario has to run on unmodified.
-if (process.platform === "linux") {
-  app.commandLine.appendSwitch("in-process-gpu");
-}
-
-// Use native Wayland when we're in a Wayland session.
+// In a Wayland session: run under XWayland and uncap the frame rate.
 //
-// Electron otherwise runs under XWayland, and on a fractional-scaled or
-// ultrawide display XWayland can expose a bogus low virtual refresh rate
-// (e.g. a 10240×2880 framebuffer reported at ~24 Hz). Electron then paints at
-// that rate, so scrolling and animations stutter badly — while the user's
-// browser, on native Wayland, runs at the display's true (high) refresh and
-// looks smooth. Forcing the Wayland backend fixes both the refresh rate and
-// fractional DISPLAY scaling in one go. We fall back to the default (X11) on
-// non-Wayland sessions so the same AppImage still runs everywhere.
+// Two separate problems have to be balanced here:
+//
+//  1. Native Wayland (`--ozone-platform=wayland`) WEDGES THE COMPOSITOR on some
+//     setups — reproduced on Ubuntu 26.04 / GNOME with an AMD/Mesa-26 GPU: the
+//     page renders fully in the DOM but no frame is ever painted, so the window
+//     is blank. So we must NOT force native Wayland; we run under XWayland
+//     (Electron's default), where the same machine paints correctly with full
+//     out-of-process, hardware-accelerated compositing.
+//
+//  2. But under XWayland a fractional-scaled or ultrawide display can expose a
+//     bogus low virtual refresh rate (e.g. a 10240×2880 framebuffer reported at
+//     ~24 Hz). Electron would then paint at that rate and scrolling/animations
+//     stutter. Uncapping the frame rate (disable-gpu-vsync +
+//     disable-frame-rate-limit) makes Electron paint as fast as it can instead
+//     of throttling to the bogus refresh, so scrolling is smooth again.
+//
+// Net effect: it both renders AND scrolls smoothly, without the native-Wayland
+// blank-window risk. Explicitly pin ozone to x11 so this holds even if a future
+// Electron changes its default backend.
 //
 // (TEXT scaling — Settings → Accessibility → Large Text — is separate; GTK apps
 // and browsers apply it but Electron does not, so desktopTextScale() below
@@ -54,10 +52,9 @@ const isWaylandSession =
   process.platform === "linux" &&
   (process.env.XDG_SESSION_TYPE === "wayland" || Boolean(process.env.WAYLAND_DISPLAY));
 if (isWaylandSession) {
-  app.commandLine.appendSwitch("ozone-platform", "wayland");
-  // Ensure GNOME (client-side decorations) still gives the window a title bar
-  // and resize borders under the Wayland backend.
-  app.commandLine.appendSwitch("enable-features", "WaylandWindowDecorations");
+  app.commandLine.appendSwitch("ozone-platform", "x11");
+  app.commandLine.appendSwitch("disable-gpu-vsync");
+  app.commandLine.appendSwitch("disable-frame-rate-limit");
 }
 
 // GNOME's text-scaling-factor (1.0 when unset). Best-effort, Linux/GNOME only.
