@@ -49,11 +49,38 @@ or the staged path breaks.
 ## Commands
 
 ```bash
-npm run dev           # Electron over `next dev` (needs Node on the dev machine)
-npm run build:linux   # build web (standalone) → stage → electron-builder → AppImage
+npm run dev             # Electron over `next dev` (needs Node on the dev machine)
+npm run build:linux     # build web (standalone) → stage → electron-builder → AppImage
+npm run install:linux   # install that AppImage as a single desktop entry
+npm run uninstall:linux # remove it again
 ```
 
 Output: `dist/Piezario-*.AppImage`.
+
+## Installing without collecting duplicate launcher entries
+
+An AppImage is only a file, so "installing" it usually means letting
+AppImageLauncher / `appimaged` integrate it. That copies it into `~/Applications`
+under a **content-hashed** name (`Piezario-0.1.0_<md5>.AppImage`) and writes one
+`~/.local/share/applications/appimagekit_<md5>-Piezario.desktop` per file. Every
+rebuild is a different file, so every rebuild adds *another* launcher entry —
+`Piezario (0.1.0)`, `Piezario (0.1.0) (1)`, `(2)`… and nothing removes the old
+ones. Bumping the version does not help; the hash is per build, not per version.
+
+`install-linux.sh` (the `install:linux` script) avoids the whole mechanism:
+
+- installs to a **fixed** path, `~/.local/share/piezario/Piezario.AppImage`, so a
+  reinstall overwrites in place;
+- that folder is deliberately **not** one appimaged watches (`~/Downloads`,
+  `~/Desktop`, `~/Applications`, `~/.local/bin`, `~/bin`, `/opt`,
+  `/usr/local/bin`), so nothing re-integrates it behind your back;
+- writes one `piezario.desktop` with a fixed name and the same
+  `StartupWMClass=piezario-desktop` the packaged entry uses;
+- purges any AppImageLauncher-integrated Piezario (entry, hashed AppImage, and
+  extracted icon) first, which is what clears an already-duplicated menu.
+
+It copies to `Piezario.AppImage.new` and `mv`s it into place — overwriting the
+file a running instance is executing from would kill that session.
 
 ## The Chromium sandbox
 

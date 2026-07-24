@@ -11,6 +11,8 @@
     "buildinfo": "node build-info.js",
     "repack": "node repack-appimage.js",
     "build:linux": "npm run build:web && npm run stage && npm run buildinfo && electron-builder --linux AppImage && npm run repack",
+    "install:linux": "./install-linux.sh",
+    "uninstall:linux": "./install-linux.sh --uninstall",
     "build:win": "npm run build:web && npm run stage && npm run buildinfo && electron-builder --win nsis"
   },
   "devDependencies": {
