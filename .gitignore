@@ -16,6 +16,8 @@ coverage/
 # --- Electron build -------------------------------------------------------
 desktop/staging/
 desktop/dist/
+# Generated at build time by desktop/build-info.js (stamps the About dialog).
+desktop/build-info.json
 
 # --- Python (thumbnail CLI, dev-only) -------------------------------------
 __pycache__/

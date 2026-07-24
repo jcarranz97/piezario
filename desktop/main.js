@@ -11,7 +11,7 @@
 // The whole catalog is wired from one env var: CATALOG_CONFIG points at the
 // user's catalog.yaml, and Next resolves models/ fonts/ icons/ relative to it.
 
-const { app, BrowserWindow, dialog, Menu, shell } = require("electron");
+const { app, BrowserWindow, clipboard, dialog, Menu, shell } = require("electron");
 const { spawn, execFileSync } = require("node:child_process");
 
 // Run without Chromium's sandbox. An AppImage mounts read-only, so its
@@ -22,6 +22,11 @@ const { spawn, execFileSync } = require("node:child_process");
 // loads its OWN localhost server, never untrusted web content, so the sandbox
 // (which exists to contain hostile web pages) protects nothing.
 app.commandLine.appendSwitch("no-sandbox");
+
+// (The window's X11 WM_CLASS — which GNOME uses to pick the taskbar icon — is
+// "piezario-desktop", derived by Electron from this package's `name`. Chromium's
+// --class switch does NOT override it under Ozone. The .desktop file's
+// StartupWMClass is pinned to match in package.json; see desktop/AGENTS.md.)
 
 // In a Wayland session: run under XWayland and uncap the frame rate.
 //
@@ -236,9 +241,12 @@ async function startServer(catalogDir, port) {
     });
   }
 
-  serverProc.on("exit", (code) => {
-    serverProc = null;
-    if (code && code !== 0 && !app.isQuitting) {
+  const proc = serverProc;
+  proc.on("exit", (code) => {
+    if (serverProc === proc) serverProc = null;
+    // A SIGTERM we sent (quit or catalog-folder restart) surfaces as code 143;
+    // only report exits we did not ask for.
+    if (code && code !== 0 && !app.isQuitting && !proc.expectedExit) {
       dialog.showErrorBox(
         "Catalog server stopped",
         `The catalog server exited unexpectedly (code ${code}).`,
@@ -251,9 +259,73 @@ async function startServer(catalogDir, port) {
 
 function stopServer() {
   if (serverProc) {
+    serverProc.expectedExit = true;
     serverProc.kill();
     serverProc = null;
   }
+}
+
+// --- about ------------------------------------------------------------------
+
+// The build stamp written by build-info.js. Absent in dev (and if a build ever
+// skips the step), so every field is optional and the dialog omits what it
+// lacks — an About box must never be the thing that crashes the app.
+function buildInfo() {
+  try {
+    return JSON.parse(
+      fs.readFileSync(path.join(__dirname, "build-info.json"), "utf8"),
+    );
+  } catch {
+    return {};
+  }
+}
+
+// ISO 8601 UTC → the user's locale, so "2026-07-24T09:12:03Z" reads as a date
+// rather than a machine string. Falls back to the raw value if unparseable.
+function formatBuildDate(iso) {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return iso;
+  return date.toLocaleString(undefined, {
+    dateStyle: "long",
+    timeStyle: "short",
+  });
+}
+
+// The lines shown in the About dialog, also used verbatim for "Copy details" so
+// a bug report can carry the exact build that produced it.
+function aboutLines() {
+  const { builtAt, commit } = buildInfo();
+  const lines = [`Version ${app.getVersion()}`];
+
+  if (builtAt) lines.push(`Built ${formatBuildDate(builtAt)}`);
+  // A dev run has no stamp; say so rather than showing a bare version that
+  // could be mistaken for a release build.
+  else lines.push("Built from source (development)");
+
+  if (commit) lines.push(`Commit ${commit}`);
+  lines.push("", `Electron ${process.versions.electron}`);
+  lines.push(`Chromium ${process.versions.chrome}`);
+  lines.push(`Node ${process.versions.node}`);
+
+  const { catalogDir } = loadSettings();
+  if (catalogDir) lines.push("", `Catalog folder: ${catalogDir}`);
+
+  return lines;
+}
+
+async function showAbout() {
+  const detail = aboutLines().join("\n");
+  const { response } = await dialog.showMessageBox(mainWindow ?? undefined, {
+    type: "info",
+    title: "About Piezario",
+    message: "Piezario",
+    detail,
+    buttons: ["OK", "Copy details"],
+    defaultId: 0,
+    cancelId: 0,
+    noLink: true,
+  });
+  if (response === 1) clipboard.writeText(`Piezario\n${detail}`);
 }
 
 // --- window + menu ----------------------------------------------------------
@@ -338,6 +410,11 @@ function buildMenu() {
         { role: "togglefullscreen" },
         { role: "toggleDevTools" },
       ],
+    },
+    {
+      label: "Help",
+      role: "help",
+      submenu: [{ label: "About Piezario", click: () => showAbout() }],
     },
   ];
   Menu.setApplicationMenu(Menu.buildFromTemplate(template));

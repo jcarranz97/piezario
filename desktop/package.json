@@ -5,12 +5,13 @@
   "description": "Electron shell for Piezario — runs the Next.js web app as a desktop app.",
   "main": "main.js",
   "scripts": {
-    "dev": "NEXT_DEV=1 electron .",
+    "dev": "NEXT_DEV=1 electron . --no-sandbox",
     "build:web": "npm --prefix ../web install && npm --prefix ../web run build",
     "stage": "node stage.js",
+    "buildinfo": "node build-info.js",
     "repack": "node repack-appimage.js",
-    "build:linux": "npm run build:web && npm run stage && electron-builder --linux AppImage && npm run repack",
-    "build:win": "npm run build:web && npm run stage && electron-builder --win nsis"
+    "build:linux": "npm run build:web && npm run stage && npm run buildinfo && electron-builder --linux AppImage && npm run repack",
+    "build:win": "npm run build:web && npm run stage && npm run buildinfo && electron-builder --win nsis"
   },
   "devDependencies": {
     "electron": "^33.0.0",
@@ -26,7 +27,8 @@
     "files": [
       "main.js",
       "preload.js",
-      "package.json"
+      "package.json",
+      "build-info.json"
     ],
     "extraResources": [
       {
@@ -40,6 +42,9 @@
       ],
       "category": "Graphics",
       "icon": "build/icon.png",
+      "desktop": {
+        "StartupWMClass": "piezario-desktop"
+      },
       "executableArgs": [
         "--no-sandbox"
       ]
