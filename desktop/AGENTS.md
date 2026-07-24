@@ -61,26 +61,44 @@ Output: `dist/Piezario-*.AppImage`.
 
 An AppImage is only a file, so "installing" it usually means letting
 AppImageLauncher / `appimaged` integrate it. That copies it into `~/Applications`
-under a **content-hashed** name (`Piezario-0.1.0_<md5>.AppImage`) and writes one
-`~/.local/share/applications/appimagekit_<md5>-Piezario.desktop` per file. Every
+under a **content-hashed** name (`Piezario-0.4.0_<md5>.AppImage`) and writes one
+`~/.local/share/applications/appimagekit_<md5>-Piezario.desktop` for it. Every
 rebuild is a different file, so every rebuild adds *another* launcher entry —
-`Piezario (0.1.0)`, `Piezario (0.1.0) (1)`, `(2)`… and nothing removes the old
-ones. Bumping the version does not help; the hash is per build, not per version.
+`Piezario (0.3.0)`, `Piezario (0.4.0)`, … and nothing removes the old ones.
+Bumping the version does not help; the hash is per build, not per version.
 
-`install-linux.sh` (the `install:linux` script) avoids the whole mechanism:
+**Installing to an unwatched folder does not help either.** AppImageLauncher
+registers itself with `binfmt_misc` for the AppImage format, so it intercepts
+*any* AppImage executed from *any* path and offers to move it into
+`~/Applications` and integrate it. An install that merely places an `.AppImage`
+somewhere quiet gets hoovered up the first time the user launches it.
 
-- installs to a **fixed** path, `~/.local/share/piezario/Piezario.AppImage`, so a
-  reinstall overwrites in place;
-- that folder is deliberately **not** one appimaged watches (`~/Downloads`,
-  `~/Desktop`, `~/Applications`, `~/.local/bin`, `~/bin`, `/opt`,
-  `/usr/local/bin`), so nothing re-integrates it behind your back;
-- writes one `piezario.desktop` with a fixed name and the same
-  `StartupWMClass=piezario-desktop` the packaged entry uses;
-- purges any AppImageLauncher-integrated Piezario (entry, hashed AppImage, and
-  extracted icon) first, which is what clears an already-duplicated menu.
+So `install-linux.sh` (the `install:linux` script) does not install an AppImage
+at all:
 
-It copies to `Piezario.AppImage.new` and `mv`s it into place — overwriting the
-file a running instance is executing from would kill that session.
+- it **extracts** the AppImage (`--appimage-extract`) into
+  `~/.local/share/piezario/app/` and points the launcher at that AppDir's
+  `AppRun` — an ordinary executable, which `binfmt_misc` has no interest in.
+  Nothing is left for AppImageLauncher to integrate;
+- reinstalling replaces the same directory and rewrites the same
+  `piezario.desktop`, so there is always exactly one entry;
+- it purges any AppImageLauncher-integrated Piezario (entry, hashed AppImage,
+  extracted icon) first, which is what clears an already-duplicated menu;
+- `StartupWMClass=piezario-desktop` is repeated here — see "The taskbar icon".
+
+Two ordering details the script depends on:
+
+- **Extract before purging.** The source is very often an already-integrated
+  AppImage under `~/Applications` — exactly what the purge deletes — so purging
+  first would delete the file being installed.
+- **Swap, don't overwrite.** The new AppDir is moved into place and the old one
+  deleted afterwards, so a running instance keeps its files until it exits.
+
+The `Exec` line must **not** repeat `--no-sandbox`: `repack-appimage.js` already
+patched it into `AppRun`, which survives extraction.
+
+Cost of the approach: the extracted AppDir is uncompressed (~300 MB vs ~120 MB).
+In exchange, startup skips the squashfs mount.
 
 ## The Chromium sandbox
 

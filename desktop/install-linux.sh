@@ -2,21 +2,27 @@
 #
 # Install the built AppImage as a single, stable desktop entry.
 #
-# Why this exists: an AppImage is just a file, so "installing" it normally means
-# handing it to AppImageLauncher / appimaged, which copies it into ~/Applications
-# under a *content-hashed* name (Piezario-0.1.0_<md5>.AppImage) and writes one
-# ~/.local/share/applications/appimagekit_<md5>-Piezario.desktop per file. Every
-# rebuild is a different file, so every rebuild becomes another launcher entry —
-# "Piezario (0.1.0)", "Piezario (0.1.0) (1)", "Piezario (0.1.0) (2)"… and none of
-# the old ones is ever removed.
+# Why this exists: handing the AppImage to AppImageLauncher / appimaged gives you
+# a new launcher entry per build. It copies the file into ~/Applications under a
+# *content-hashed* name (Piezario-0.4.0_<md5>.AppImage) and writes one
+# ~/.local/share/applications/appimagekit_<md5>-Piezario.desktop for it. Every
+# rebuild is a different file, so every rebuild becomes another entry —
+# "Piezario (0.3.0)", "Piezario (0.4.0)", … and none of the old ones is ever
+# removed. Bumping the version does not help; the hash is per build.
 #
-# This script sidesteps that: it installs to a fixed path under
-# ~/.local/share/piezario/ — deliberately NOT one of the folders appimaged
-# watches (~/Downloads, ~/Desktop, ~/Applications, ~/.local/bin, ~/bin, /opt,
-# /usr/local/bin) — and writes one .desktop file with a fixed name, so
-# reinstalling overwrites in place instead of accumulating.
+# Moving the file somewhere unwatched does not help either: AppImageLauncher
+# registers itself with binfmt_misc for the AppImage format, so it intercepts
+# *any* AppImage being executed from *any* path and offers to move it into
+# ~/Applications and integrate it.
 #
-# It also purges any AppImageLauncher-integrated Piezario left over from before.
+# So this script does not install an AppImage at all. It **extracts** it into
+# ~/.local/share/piezario/app/ and points the launcher at the AppDir's AppRun —
+# an ordinary executable, which binfmt_misc has no interest in. There is no
+# AppImage left for anything to integrate, and reinstalling replaces the same
+# directory and rewrites the same .desktop file, so exactly one entry exists.
+#
+# Cost: the AppDir is uncompressed (~300 MB vs ~120 MB). In exchange, startup
+# skips the squashfs mount.
 #
 # Usage:
 #   ./install-linux.sh [path/to/Piezario.AppImage]   # defaults to dist/*.AppImage
@@ -28,7 +34,7 @@ here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 data="${XDG_DATA_HOME:-$HOME/.local/share}"
 
 install_dir="$data/piezario"
-target="$install_dir/Piezario.AppImage"
+app_dir="$install_dir/app"
 desktop_file="$data/applications/piezario.desktop"
 icon_file="$data/icons/hicolor/512x512/apps/piezario.png"
 
@@ -36,12 +42,12 @@ icon_file="$data/icons/hicolor/512x512/apps/piezario.png"
 # hashed AppImage that entry points at, and the icon it extracted. Scoped to
 # Piezario only — other integrated AppImages are left alone.
 purge_appimagelauncher() {
+  local entry binary icon
   shopt -s nullglob
   for entry in "$data"/applications/appimagekit_*-Piezario.desktop; do
     # First Exec= line, first token: the hashed AppImage path.
-    local binary
     binary="$(grep -m1 '^Exec=' "$entry" | sed 's/^Exec=//; s/ .*//')"
-    if [ -n "$binary" ] && [ -f "$binary" ] && [ "$binary" != "$target" ]; then
+    if [ -n "$binary" ] && [ -f "$binary" ]; then
       echo "  removing $binary"
       rm -f "$binary"
     fi
@@ -81,26 +87,39 @@ if [ -z "$appimage" ] || [ ! -f "$appimage" ]; then
   echo "No AppImage found. Run 'npm run build:linux' first, or pass a path." >&2
   exit 1
 fi
+appimage="$(readlink -f "$appimage")"
 
 echo "Installing $(basename "$appimage")…"
 
-mkdir -p "$install_dir" "$(dirname "$desktop_file")" "$(dirname "$icon_file")"
-
-# Copy BEFORE purging. The source is very often an already-integrated AppImage in
-# ~/Applications — exactly what the purge deletes — so purging first would remove
-# the file we are about to install.
+# Extract BEFORE purging. The source is very often an already-integrated AppImage
+# in ~/Applications — exactly what the purge deletes — so purging first would
+# remove the file we are about to install.
 #
-# Copy to a temp name and move into place: replacing the file a running instance
-# is executing from would otherwise break it mid-session.
-cp "$appimage" "$target.new"
-chmod +x "$target.new"
+# --appimage-extract always writes ./squashfs-root, so run it in a scratch dir.
+staging="$(mktemp -d "${TMPDIR:-/tmp}/piezario-install-XXXXXX")"
+trap 'rm -rf "$staging"' EXIT
+( cd "$staging" && "$appimage" --appimage-extract >/dev/null )
+if [ ! -x "$staging/squashfs-root/AppRun" ]; then
+  echo "Extraction failed: no AppRun in the AppDir." >&2
+  exit 1
+fi
 
 purge_appimagelauncher
 
-mv -f "$target.new" "$target"
+mkdir -p "$install_dir" "$(dirname "$desktop_file")" "$(dirname "$icon_file")"
+
+# Swap the new AppDir in, then delete the old one: a running instance keeps its
+# files alive until it exits, and the launcher never points at a half-copy.
+rm -rf "$app_dir.old"
+[ -d "$app_dir" ] && mv "$app_dir" "$app_dir.old"
+mv "$staging/squashfs-root" "$app_dir"
+rm -rf "$app_dir.old"
 
 cp "$here/build/icon.png" "$icon_file"
 
+# AppRun already appends --no-sandbox to the Electron binary (repack-appimage.js
+# patches it), so the Exec line must not repeat it.
+#
 # StartupWMClass must stay 'piezario-desktop' — Electron derives WM_CLASS from
 # package.json's `name`, and GNOME matches the running window to this entry by
 # that string. See AGENTS.md → "The taskbar icon".
@@ -109,7 +128,8 @@ cat > "$desktop_file" <<EOF
 Type=Application
 Name=Piezario
 Comment=Organize a 3D-model catalog and price your prints
-Exec=$target --no-sandbox %U
+Exec=$app_dir/AppRun %U
+TryExec=$app_dir/AppRun
 Icon=piezario
 Terminal=false
 Categories=Graphics;
@@ -119,5 +139,5 @@ chmod +x "$desktop_file"
 
 refresh_caches
 
-echo "Installed → $target"
+echo "Installed → $app_dir"
 echo "Launcher  → $desktop_file"
