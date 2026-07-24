@@ -396,19 +396,25 @@ function buildMenu() {
         { role: "quit" },
       ],
     },
-    { role: "editMenu" },
     {
       label: "View",
       submenu: [
         { role: "reload" },
-        { role: "forceReload" },
         { type: "separator" },
-        { role: "resetZoom" },
+        // Not the built-in resetZoom role: that hardcodes 1.0 and would throw
+        // away the desktop text scale applied in createWindow().
+        {
+          label: "Actual Size",
+          accelerator: "CommandOrControl+0",
+          click: (_item, win) => {
+            const target = win ?? mainWindow;
+            if (target) target.webContents.setZoomFactor(desktopTextScale());
+          },
+        },
         { role: "zoomIn" },
         { role: "zoomOut" },
         { type: "separator" },
         { role: "togglefullscreen" },
-        { role: "toggleDevTools" },
       ],
     },
     {
