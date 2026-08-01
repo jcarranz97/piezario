@@ -4,11 +4,13 @@ import { notFound } from "next/navigation";
 import { LuExternalLink } from "react-icons/lu";
 
 import { LicenseBadge } from "@/components/common/license-badge";
+import { Customizer } from "@/components/model/customizer";
 import { FileTable } from "@/components/model/file-table";
 import { ModelCostCard } from "@/components/model/model-cost-card";
 import { ModelEditPanel } from "@/components/model/model-edit-panel";
 import { Readme } from "@/components/model/readme";
 import { getModel, getModels, modelsRoot } from "@/lib/catalog";
+import { CustomizeError, type CustomizeSchema, customizeSchema } from "@/lib/customize";
 import { failureRiskFactor, loadConfig } from "@/lib/config";
 import { CAPABILITY_HINTS, CAPABILITY_LABELS } from "@/lib/files";
 import { getFilaments, getSupplies, resolveSupply } from "@/lib/inventory";
@@ -174,6 +176,24 @@ export default async function ModelPage({
     }
   }
 
+  // The customiser, for a model whose README declares a generator script.
+  // Building the form means importing that script in the model's own venv to
+  // ask click what its options are — seconds the first time, then cached
+  // against the script's mtime. A generator that cannot be inspected must not
+  // take the page down with it, so the failure is shown in place of the form.
+  let customize: CustomizeSchema | null = null;
+  let customizeError: string | null = null;
+  if (model.customize) {
+    try {
+      customize = await customizeSchema(model.slug, model.customize);
+    } catch (error) {
+      customizeError =
+        error instanceof CustomizeError
+          ? error.message
+          : "This model's generator could not be inspected.";
+    }
+  }
+
   // Autocomplete suggestions: everything already used elsewhere in the catalog.
   const models = await getModels();
   const allTags = [...new Set(models.flatMap((item) => item.tags))].sort();
@@ -234,6 +254,23 @@ export default async function ModelPage({
                 alt={model.title}
                 className="w-full rounded-2xl border border-[var(--card-border)] object-cover"
               />
+            )}
+
+            {customize && (
+              <Customizer
+                slug={model.slug}
+                basic={customize.basic}
+                advanced={customize.advanced}
+                hasPreview={customize.preview !== null}
+              />
+            )}
+            {customizeError && (
+              <Card variant="transparent" className="py-6 text-center">
+                <Card.Content>
+                  <p className="font-medium">Customiser unavailable</p>
+                  <p className="mt-1 text-sm text-muted">{customizeError}</p>
+                </Card.Content>
+              </Card>
             )}
 
             {model.hasReadme ? (
