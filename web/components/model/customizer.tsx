@@ -11,6 +11,7 @@ import {
   ColorSwatchPicker,
   Label,
   Switch,
+  Tooltip,
 } from "@heroui/react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { LuDownload, LuSettings2 } from "react-icons/lu";
@@ -155,12 +156,28 @@ function ParamField({
                 size="xs"
               >
                 {param.choices.map((choice) => (
+                  // The tooltip goes *inside* the item, not around it: a
+                  // ColorSwatchPicker is a react-aria collection and builds
+                  // itself from its direct children, so wrapping the item
+                  // hides it from the collection entirely.
                   <ColorSwatchPicker.Item
                     key={String(choice.value)}
                     color={String(choice.value)}
                     aria-label={choice.label}
                   >
-                    <ColorSwatchPicker.Swatch />
+                    <Tooltip delay={150}>
+                      {/* size-full: the trigger sits between the item and the
+                          swatch, and a plain block collapses to 0x0 there —
+                          the swatch has no intrinsic size and fills its
+                          parent. Without this the whole grid renders blank. */}
+                      <Tooltip.Trigger className="size-full">
+                        <ColorSwatchPicker.Swatch />
+                      </Tooltip.Trigger>
+                      {/* Names the spool before it is chosen — "Cocoa Brown"
+                          is the thing being ordered, and a grid of thirty
+                          circles is otherwise a guessing game. */}
+                      <Tooltip.Content>{choice.label}</Tooltip.Content>
+                    </Tooltip>
                   </ColorSwatchPicker.Item>
                 ))}
               </ColorSwatchPicker>
