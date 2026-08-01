@@ -123,10 +123,14 @@ function ParamField({
               {preset ? preset.label : swatch}
             </Label>
           </ColorPicker.Trigger>
-          <ColorPicker.Popover>
+          {/* A fixed width, because the popover otherwise sizes itself to the
+              preset grid: a full filament line is thirty swatches, and left to
+              itself that stretched the colour area wide enough to push the hue
+              slider off the screen. The presets wrap inside this instead. */}
+          <ColorPicker.Popover className="w-[260px] max-w-[calc(100vw-2rem)]">
             <ColorArea
               aria-label={`${param.label} area`}
-              className="max-w-full"
+              className="h-[150px] w-full"
               colorSpace="hsb"
               xChannel="saturation"
               yChannel="brightness"
@@ -146,7 +150,10 @@ function ParamField({
               </ColorSlider.Track>
             </ColorSlider>
             {param.choices && param.choices.length > 0 && (
-              <ColorSwatchPicker className="justify-center px-1" size="xs">
+              <ColorSwatchPicker
+                className="max-h-[104px] flex-wrap justify-center gap-1 overflow-y-auto px-1"
+                size="xs"
+              >
                 {param.choices.map((choice) => (
                   <ColorSwatchPicker.Item
                     key={String(choice.value)}
