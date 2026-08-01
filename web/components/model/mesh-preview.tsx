@@ -6,7 +6,7 @@ import * as THREE from "three";
 import { type MeshPart, parseThreeMfMesh } from "@/lib/threemf-mesh";
 
 /**
- * A turntable preview of a generated part, in the colours it will print in.
+ * A preview of a generated part, in the colours it will print in.
  *
  * This reads the **3MF**, not an STL, and that is the whole point. A dog cup
  * is one object made of three parts, the cup, the paw and the name, and the
@@ -18,8 +18,9 @@ import { type MeshPart, parseThreeMfMesh } from "@/lib/threemf-mesh";
  * survives all the way to the screen and the legend underneath can name which
  * filament slot each colour comes out of.
  *
- * Drag to orbit, wheel to zoom. Written against three directly rather than
- * pulling in react-three-fiber: this is a handful of meshes and two lights.
+ * The part holds still; drag to orbit, wheel to zoom. Written against three
+ * directly rather than pulling in react-three-fiber: this is a handful of
+ * meshes and two lights.
  */
 export function MeshPreview({ url }: { url: string }) {
   const mountRef = useRef<HTMLDivElement>(null);
@@ -72,6 +73,11 @@ export function MeshPreview({ url }: { url: string }) {
     const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
     renderer.setPixelRatio(window.devicePixelRatio);
     renderer.setSize(mount.clientWidth, mount.clientHeight);
+    // Belt and braces: if a previous scene ever fails to tear down (React
+    // re-running this effect in dev, a cleanup that raced a re-render), its
+    // canvas would stay in the mount and the two would draw over each other.
+    // The mount holds nothing but our canvas, so emptying it is safe.
+    mount.replaceChildren();
     mount.appendChild(renderer.domElement);
 
     // Two lights and no shadows: the point is to read the geometry and tell
@@ -117,7 +123,6 @@ export function MeshPreview({ url }: { url: string }) {
     pivot.add(group);
     scene.add(pivot);
 
-    let frame = 0;
     let theta = Math.PI / 4;
     let phi = Math.PI / 3;
     // Fit the bounding sphere in the vertical field of view, plus a margin.
@@ -127,6 +132,10 @@ export function MeshPreview({ url }: { url: string }) {
     let lastX = 0;
     let lastY = 0;
 
+    // Nothing here animates: the part sits still until someone drags it. So the
+    // scene is drawn on demand rather than from a requestAnimationFrame loop —
+    // a loop would burn a GPU frame every 16ms to redraw an identical image,
+    // and any loop that outlives its cleanup keeps doing so invisibly.
     function placeCamera() {
       camera.position.set(
         radius * Math.sin(phi) * Math.cos(theta),
@@ -134,6 +143,7 @@ export function MeshPreview({ url }: { url: string }) {
         radius * Math.sin(phi) * Math.sin(theta),
       );
       camera.lookAt(0, 0, 0);
+      renderer.render(scene, camera);
     }
 
     const canvas = renderer.domElement;
@@ -145,6 +155,16 @@ export function MeshPreview({ url }: { url: string }) {
     };
     const onMove = (event: PointerEvent) => {
       if (!dragging) {
+        return;
+      }
+      // Self-heal a missed pointerup. If one is ever lost — released off-screen,
+      // over a devtools panel, swallowed by a synthetic event — `dragging`
+      // stays true and the part then orbits wildly under a mouse with no
+      // button held, which reads as the view spinning by itself. `buttons` is
+      // authoritative on every move, so ask it rather than trusting that the
+      // release arrived.
+      if (event.buttons === 0) {
+        endDrag(event);
         return;
       }
       // Plus, not minus. `placeCamera` puts x on cos(theta) and z on sin(theta),
@@ -160,10 +180,14 @@ export function MeshPreview({ url }: { url: string }) {
       lastY = event.clientY;
       placeCamera();
     };
-    const onUp = (event: PointerEvent) => {
+    // Releasing capture matters as much as clearing the flag: while the canvas
+    // holds the pointer it also swallows clicks meant for the buttons above it.
+    function endDrag(event: PointerEvent) {
       dragging = false;
-      canvas.releasePointerCapture(event.pointerId);
-    };
+      if (canvas.hasPointerCapture(event.pointerId)) {
+        canvas.releasePointerCapture(event.pointerId);
+      }
+    }
     const onWheel = (event: WheelEvent) => {
       event.preventDefault();
       radius = Math.min(2000, Math.max(10, radius * (event.deltaY > 0 ? 1.1 : 0.9)));
@@ -172,7 +196,10 @@ export function MeshPreview({ url }: { url: string }) {
 
     canvas.addEventListener("pointerdown", onDown);
     canvas.addEventListener("pointermove", onMove);
-    canvas.addEventListener("pointerup", onUp);
+    canvas.addEventListener("pointerup", endDrag);
+    // A pointer can also be taken away rather than lifted: a touch turning into
+    // a browser gesture, a tab losing focus mid-drag.
+    canvas.addEventListener("pointercancel", endDrag);
     canvas.addEventListener("wheel", onWheel, { passive: false });
 
     const resize = new ResizeObserver(() => {
@@ -182,28 +209,18 @@ export function MeshPreview({ url }: { url: string }) {
       camera.aspect = mount.clientWidth / mount.clientHeight;
       camera.updateProjectionMatrix();
       renderer.setSize(mount.clientWidth, mount.clientHeight);
+      renderer.render(scene, camera);
     });
     resize.observe(mount);
 
     placeCamera();
-    const tick = () => {
-      frame = requestAnimationFrame(tick);
-      // A slow idle spin while nobody is touching it: the whole reason to show
-      // a 3D view rather than a render is that it turns.
-      if (!dragging) {
-        theta += 0.0025;
-        placeCamera();
-      }
-      renderer.render(scene, camera);
-    };
-    tick();
 
     return () => {
-      cancelAnimationFrame(frame);
       resize.disconnect();
       canvas.removeEventListener("pointerdown", onDown);
       canvas.removeEventListener("pointermove", onMove);
-      canvas.removeEventListener("pointerup", onUp);
+      canvas.removeEventListener("pointerup", endDrag);
+      canvas.removeEventListener("pointercancel", endDrag);
       canvas.removeEventListener("wheel", onWheel);
       for (const mesh of built) {
         mesh.geometry.dispose();
