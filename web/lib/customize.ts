@@ -17,6 +17,7 @@ import {
   labelFromOpt,
 } from "./customize-spec";
 import { fontsRoot, getFonts } from "./fonts";
+import { getIcons, iconsRoot } from "./icons";
 import { getFilaments } from "./inventory";
 
 /**
@@ -181,9 +182,21 @@ function filamentColourChoices(): ChoiceOption[] {
   return [...seen.values()];
 }
 
+/** The SVGs in `icons/`, as choices, for a parameter bound to that folder. */
+async function iconChoices(): Promise<ChoiceOption[]> {
+  return (await getIcons()).map((icon) => ({
+    label: icon.categories.length
+      ? `${icon.categories.join("/")}/${icon.name}`
+      : icon.name,
+    value: icon.id,
+  }));
+}
+
 /** Options for a parameter bound to a catalog inventory. */
 async function catalogChoices(source: CatalogSource): Promise<ChoiceOption[]> {
-  return source === "fonts" ? fontChoices() : filamentColourChoices();
+  if (source === "fonts") return fontChoices();
+  if (source === "icons") return iconChoices();
+  return filamentColourChoices();
 }
 
 /**
@@ -222,7 +235,13 @@ export async function customizeSchema(
     const fromScript = param.choices
       ? param.choices.map((choice) => ({ label: choice, value: choice }))
       : null;
-    const choices = source ? await catalogChoices(source) : (declared ?? fromScript);
+    // Merged, not replaced. `--pattern` on the lip balm holder takes one of
+    // four motif *names* or the path to an SVG, so the frontmatter declares
+    // the names and the binding adds the catalog's own artwork after them.
+    const bound = source ? await catalogChoices(source) : null;
+    const choices = bound
+      ? [...(declared ?? []), ...bound]
+      : (declared ?? fromScript);
 
     // A script's own default need not be usable by the control that renders
     // it, and the two bindings fail differently.
@@ -252,6 +271,7 @@ export async function customizeSchema(
     return {
       name: param.name,
       opt: param.opt,
+      secondary: param.secondary,
       label: field?.label ?? override?.label ?? labelFromOpt(param.opt),
       help: override?.help ?? param.help,
       type: param.type,
@@ -288,12 +308,18 @@ export async function customizeSchema(
 /**
  * Bounds on a number from a form. There is no per-parameter range to check
  * against — click does not carry one — so this only rejects what is not a
- * number at all, plus magnitudes no dimension in millimetres could mean. The
- * generators validate their own combinations far better than this could (a
- * wall under 1.2 mm, a pitch under the tooth base) and say what to do about
- * it; those messages are surfaced to the customer rather than pre-empted.
+ * number at all. The generators validate their own combinations far better
+ * than this could (a wall under 1.2 mm, a pitch under the tooth base) and say
+ * what to do about it; those messages are surfaced rather than pre-empted.
+ *
+ * Deliberately loose. This was 100_000 to start with, sized as "no dimension
+ * in millimetres is bigger than this", and it rejected the lip balm holder's
+ * own default `--pattern-seed` of 20260730 — a seed is a number, not a
+ * length, and click does not say which is which. The bound is only here to
+ * catch input that is not a real number, so it is set where no legitimate
+ * parameter of any kind will reach it.
  */
-const MAX_MAGNITUDE = 100_000;
+const MAX_MAGNITUDE = 1e12;
 
 /** Longest a text parameter may be. A name on a handle, not an essay. */
 const MAX_TEXT = 200;
@@ -329,8 +355,21 @@ export async function toArgv(
     }
 
     if (param.type === "flag") {
-      if (raw === true || raw === "true" || raw === "on") {
+      const on = raw === true || raw === "true" || raw === "on";
+      if (on) {
         argv.push(param.opt);
+      } else if (param.secondary) {
+        // A flag that has an "off" half cannot be turned off by staying
+        // quiet: the script would apply its own default, which for
+        // `--step/--no-step` is *on* and writes a 29 MB STEP file beside
+        // every part. So say it explicitly.
+        //
+        // Not conditioned on the default being true, which was the first
+        // attempt and silently did nothing: `default` here is the value the
+        // form started from, and the frontmatter had already overridden it to
+        // false. Passing the off-flag when the script would have been off
+        // anyway costs nothing; failing to pass it costs 29 MB.
+        argv.push(param.secondary);
       }
       continue;
     }
@@ -363,6 +402,27 @@ export async function toArgv(
       }
       argv.push(param.opt, hex);
       continue;
+    }
+
+    if (param.source === "icons") {
+      // A declared name (`hearts`, `paws`, `none`) passes through as itself;
+      // anything else must be an icon id, which resolves to a path here. The
+      // browser never names a file, which is what keeps `--pattern` from
+      // being an arbitrary-file parameter — click types it as plain text, so
+      // the usual path guard does not cover it.
+      const icon = (await getIcons()).find((entry) => entry.id === text);
+      if (icon) {
+        argv.push(param.opt, path.join(iconsRoot(), icon.relPath));
+        continue;
+      }
+      // Not an icon id, so it has to be one of the names the frontmatter
+      // declared. Checked against the schema's own list rather than by
+      // guessing at the shape of the string.
+      if (param.choices?.some((choice) => String(choice.value) === text)) {
+        argv.push(param.opt, text);
+        continue;
+      }
+      throw new CustomizeError(`${param.label}: ${text} is not one of the options.`);
     }
 
     if (param.source === "fonts") {

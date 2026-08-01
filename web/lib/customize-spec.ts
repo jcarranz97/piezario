@@ -17,7 +17,7 @@
  */
 
 /** A catalog inventory a parameter's options can be drawn from. */
-export type CatalogSource = "fonts" | "filaments";
+export type CatalogSource = "fonts" | "filaments" | "icons";
 
 /** How a parameter is rendered, after click's type is flattened. */
 export type ParamType =
@@ -56,6 +56,15 @@ export interface CustomizeParam {
   name: string;
   /** The long flag actually passed on the command line. */
   opt: string;
+  /**
+   * The "off" half of a boolean pair like `--step/--no-step`.
+   *
+   * Needed because such a flag can default to *on*: emitting nothing then
+   * leaves the script's default in place, so switching it off has to say so
+   * out loud. `--step` writes a 29 MB STEP file on the lip balm holder, which
+   * makes "off" a setting people actually reach for.
+   */
+  secondary: string | null;
   label: string;
   help: string;
   type: ParamType;
@@ -235,7 +244,7 @@ export function parseCustomizeSpec(value: unknown): CustomizeSpec | null {
 
   const fromCatalog: Record<string, CatalogSource> = {};
   for (const [key, raw] of Object.entries(asRecord(block.from_catalog))) {
-    if (raw === "fonts" || raw === "filaments") {
+    if (raw === "fonts" || raw === "filaments" || raw === "icons") {
       fromCatalog[normaliseOpt(key)] = raw;
     }
   }

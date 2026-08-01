@@ -20,6 +20,7 @@ import {
 
 function param(over: Partial<CustomizeParam> & { name: string; opt: string }): CustomizeParam {
   return {
+    secondary: null,
     label: labelFromOpt(over.opt),
     help: "",
     type: "float",
@@ -95,6 +96,7 @@ describe("toArgv", () => {
   const petName = param({ name: "pet_name", opt: "--pet-name", type: "text" });
   const extruder = param({ name: "paw_extruder", opt: "--paw-extruder", type: "integer" });
   const stl = param({ name: "stl", opt: "--stl", type: "flag" });
+  const seed = param({ name: "pattern_seed", opt: "--pattern-seed", type: "integer" });
 
   it("passes through what the schema declares", async () => {
     const argv = await toArgv(schema([cups, petName]), { cups: "0.75", pet_name: "Luna" });
@@ -122,6 +124,13 @@ describe("toArgv", () => {
     await expect(toArgv(schema([cups]), { cups: "1e400" })).rejects.toBeInstanceOf(
       CustomizeError,
     );
+    // A large-but-real number is not "not a number". The lip balm holder's
+    // `--pattern-seed` defaults to 20260730, and an earlier bound sized for
+    // millimetres refused the script's own default.
+    expect(await toArgv(schema([seed]), { pattern_seed: "20260730" })).toEqual([
+      "--pattern-seed",
+      "20260730",
+    ]);
     await expect(toArgv(schema([extruder]), { paw_extruder: "2.5" })).rejects.toThrow(
       /whole number/,
     );

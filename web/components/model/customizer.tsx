@@ -13,8 +13,8 @@ import {
   Switch,
   Tooltip,
 } from "@heroui/react";
-import { useCallback, useEffect, useRef, useState } from "react";
-import { LuDownload, LuSettings2 } from "react-icons/lu";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { LuDownload, LuRefreshCw, LuSettings2 } from "react-icons/lu";
 
 import type { CustomizeParam, ParamGroup } from "@/lib/customize-spec";
 
@@ -249,6 +249,25 @@ export function Customizer({
   const [job, setJob] = useState<JobView | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [starting, setStarting] = useState(false);
+  /** Which of a multi-part result the viewer is showing. */
+  const [shown, setShown] = useState(0);
+  /**
+   * The parameters the result on screen was built from.
+   *
+   * A run takes seconds to minutes, so the form cannot regenerate as you
+   * type — which means the preview and the fields drift apart the moment
+   * anything is touched. People read a preview as live and were changing a
+   * colour, seeing no change, and concluding the app was broken. Holding on
+   * to what was actually generated is what lets the UI say otherwise.
+   */
+  const [generatedFor, setGeneratedFor] = useState<string | null>(null);
+
+  // Key order is not stable across edits, so sort it: two identical parameter
+  // sets must produce the same string or everything below misfires.
+  const signature = useMemo(
+    () => JSON.stringify(values, Object.keys(values).sort()),
+    [values],
+  );
 
   const setValue = useCallback((name: string, next: string) => {
     setValues((current) => ({ ...current, [name]: next }));
@@ -292,6 +311,8 @@ export function Customizer({
         setJob(null);
         return;
       }
+      setShown(0);
+      setGeneratedFor(signature);
       setJob(body);
     } catch {
       setError("Could not reach the generator.");
@@ -303,10 +324,18 @@ export function Customizer({
   const busy = starting || job?.status === "queued" || job?.status === "running";
   // The 3MF is what the preview reads: it keeps the part split, so the paw
   // and the name arrive as their own meshes in their own colours.
-  const preview =
+  //
+  // A generator may write more than one. The lip balm holder writes a barrel
+  // and a cap, which are two separate prints that screw together — showing
+  // only the first would quietly hide half the part.
+  const previews =
     job?.status === "done"
-      ? job.files.find((file) => file.name.endsWith(".3mf"))
-      : undefined;
+      ? job.files.filter((file) => file.name.endsWith(".3mf"))
+      : [];
+  const preview = previews[shown] ?? previews[0];
+  // Stale means: there is a result, and the form no longer describes it.
+  const stale =
+    job?.status === "done" && generatedFor !== null && generatedFor !== signature;
 
   return (
     <section className="flex flex-col gap-4 rounded-2xl border border-[var(--card-border)] p-5">
@@ -369,14 +398,24 @@ export function Customizer({
 
       <div className="flex flex-wrap items-center gap-3">
         <Button onPress={generate} isPending={busy}>
-          {busy ? "Generating…" : "Generate"}
+          {busy ? "Generating…" : stale ? "Re-generate" : "Generate"}
         </Button>
-        {job?.status === "done" && (
-          <span className="text-sm text-muted">
-            {job.cached
-              ? "Already generated — served from cache."
-              : `Done in ${((job.elapsedMs ?? 0) / 1000).toFixed(1)} s.`}
+        {/* Say which of the three states this is, in the same place each
+            time. "Stale" wins over the timing line: how long the last run
+            took stops being the useful fact the moment it stops matching the
+            form. */}
+        {stale ? (
+          <span className="text-sm font-medium text-[var(--accent-strong)]">
+            Parameters changed — re-generate to see them.
           </span>
+        ) : (
+          job?.status === "done" && (
+            <span className="text-sm text-muted">
+              {job.cached
+                ? "Already generated — served from cache."
+                : `Done in ${((job.elapsedMs ?? 0) / 1000).toFixed(1)} s.`}
+            </span>
+          )
         )}
       </div>
 
@@ -412,7 +451,58 @@ export function Customizer({
 
       {job?.status === "done" && (
         <div className="flex flex-col gap-4">
-          {preview && <MeshPreview url={fileUrlFor(job.id, preview.name)} />}
+          {previews.length > 1 && (
+            // One button per part. Named from the file stem, since that is
+            // what the generator called it ("custom-body" -> "body").
+            <div className="flex flex-wrap gap-2">
+              {previews.map((file, index) => {
+                const stem = file.name.replace(/\.3mf$/, "");
+                const dash = stem.lastIndexOf("-");
+                return (
+                  <Button
+                    key={file.name}
+                    size="sm"
+                    variant={index === shown ? "primary" : "ghost"}
+                    onPress={() => setShown(index)}
+                  >
+                    {dash > 0 ? stem.slice(dash + 1) : stem}
+                  </Button>
+                );
+              })}
+            </div>
+          )}
+          {preview && (
+            // The message goes *on* the viewer, not only beside the button:
+            // the viewer is where someone is looking when they wonder why
+            // their change did nothing. Dimmed rather than hidden, so the
+            // old part is still there to compare against.
+            <div className="relative">
+              <div className={stale ? "opacity-40 transition-opacity" : undefined}>
+                <MeshPreview url={fileUrlFor(job.id, preview.name)} />
+              </div>
+              {stale && (
+                <div className="absolute inset-0 grid place-items-center rounded-xl bg-[var(--background)]/60 backdrop-blur-[1px]">
+                  <div className="flex flex-col items-center gap-2 px-4 text-center">
+                    <p className="text-sm font-medium">
+                      This is the previous version
+                    </p>
+                    <p className="max-w-xs text-xs text-muted">
+                      The parameters have changed since it was generated.
+                    </p>
+                    <Button size="sm" onPress={generate} isPending={busy}>
+                      <LuRefreshCw className="size-3.5" />
+                      Re-generate
+                    </Button>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+          {stale && (
+            <p className="text-xs text-muted">
+              These files are the previous version too.
+            </p>
+          )}
           <div className="flex flex-wrap gap-2">
             {job.files.map((file) => (
               // A plain anchor, not a Button: this is a download, and only a
