@@ -37,6 +37,8 @@ export interface ResolvedSupply {
 export interface ModelCostFile {
   /** The file's display name, e.g. "out/juanito1/order.gcode.3mf". */
   label: string;
+  /** Path relative to the models root, for opening the file in the slicer. */
+  relPath: string;
   grams: number | null;
   seconds: number | null;
   rawMaterials: number;
@@ -240,6 +242,7 @@ export function estimateModelCost(
     bucket.count += 1;
     bucket.items.push({
       label: file.name,
+      relPath: file.relPath,
       grams: summary!.slice!.grams,
       seconds: summary!.slice!.seconds,
       rawMaterials: priced.rawMaterials ?? 0,

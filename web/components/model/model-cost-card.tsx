@@ -3,9 +3,19 @@
 import { Button, Card, Chip, Tooltip } from "@heroui/react";
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
-import { LuChevronDown, LuInfo, LuPencil, LuStar } from "react-icons/lu";
+import {
+  LuChevronDown,
+  LuExternalLink,
+  LuInfo,
+  LuPencil,
+  LuStar,
+} from "react-icons/lu";
 
-import { saveCostFilamentAction, saveMarkupAction } from "@/actions/model.action";
+import {
+  openFileAction,
+  saveCostFilamentAction,
+  saveMarkupAction,
+} from "@/actions/model.action";
 import { formatMoney } from "@/lib/cost";
 import type { ModelCostGroup, ModelCostOption } from "@/lib/model-cost";
 
@@ -22,10 +32,49 @@ function formatDuration(seconds: number): string {
 
 /** One entry in a row's expandable breakdown. */
 interface Detail {
-  name: string;
+  name: React.ReactNode;
   note?: string;
   amount: string;
   chip?: React.ReactNode;
+}
+
+/**
+ * A part's name that opens the file in its slicer on click. The `.gcode.3mf`
+ * (or `.3mf`) goes through the same server action as the Files card, so it
+ * lands in whatever owns that extension — Bambu Studio when
+ * `CATALOG_OPEN_3MF=bambu-studio` is set, or the desktop's file association.
+ */
+function PartLink({ relPath, label }: { relPath: string; label: string }) {
+  const [pending, startTransition] = useTransition();
+  const [error, setError] = useState<string | null>(null);
+
+  function open() {
+    setError(null);
+    startTransition(async () => {
+      const result = await openFileAction(relPath);
+      if (result.error) {
+        setError(result.error);
+      }
+    });
+  }
+
+  return (
+    <span className="flex min-w-0 flex-col">
+      <button
+        type="button"
+        onClick={open}
+        disabled={pending}
+        title={`Open ${label} in the slicer`}
+        className="group inline-flex min-w-0 items-center gap-1 text-left hover:text-[var(--accent-strong)] disabled:opacity-60"
+      >
+        <span className="truncate">{label}</span>
+        <LuExternalLink className="size-3 shrink-0 opacity-0 transition-opacity group-hover:opacity-100" />
+      </button>
+      {error && (
+        <span className="text-[10px] text-[var(--accent-strong)]">{error}</span>
+      )}
+    </span>
+  );
 }
 
 /** A faint separator line inside a tooltip, adapting to the text colour. */
@@ -336,7 +385,9 @@ function GroupCost({
           value={money(group.rawMaterials)}
           hint={rawHint}
           breakdown={group.files.map((file) => ({
-            name: partName(file.label),
+            name: (
+              <PartLink relPath={file.relPath} label={partName(file.label)} />
+            ),
             note: file.grams !== null ? `${file.grams.toFixed(1)} g` : undefined,
             amount: money(file.rawMaterials),
           }))}
@@ -348,7 +399,9 @@ function GroupCost({
           value={money(group.machine)}
           hint={machineHint}
           breakdown={group.files.map((file) => ({
-            name: partName(file.label),
+            name: (
+              <PartLink relPath={file.relPath} label={partName(file.label)} />
+            ),
             note:
               file.seconds !== null ? formatDuration(file.seconds) : undefined,
             amount: money(file.machine),

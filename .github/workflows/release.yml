@@ -18,19 +18,62 @@ on:
 permissions:
   contents: write
 
+env:
+  # Where to get electron-builder's helper binaries when GitHub's release
+  # download is down. Same path layout, so it is a drop-in for the default.
+  BINARIES_MIRROR: https://registry.npmmirror.com/-/binary/electron-builder-binaries/
+
 jobs:
   linux:
     name: Linux AppImage
     runs-on: ubuntu-latest
+    env:
+      # The appimage tool electron-builder 25.x asks for.
+      APPIMAGE_TOOL_VERSION: 12.0.1
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5
         with:
           node-version: 22
       # repack-appimage.js repacks the AppImage; it prefers electron-builder's
-      # cached mksquashfs but falls back to the system one.
+      # cached mksquashfs but falls back to the system one. p7zip-full unpacks
+      # the pre-fetched appimage tool below.
       - name: Install squashfs-tools
-        run: sudo apt-get update && sudo apt-get install -y squashfs-tools
+        run: sudo apt-get update && sudo apt-get install -y squashfs-tools p7zip-full
+      # electron-builder downloads its helper binaries from a GitHub release at
+      # build time, and that download has been 504-ing for stretches at a time —
+      # which fails the whole release. Cache the tools, and fetch them ourselves
+      # with retries plus a mirror, so a flaky hour doesn't cost a release.
+      # Bump APPIMAGE_TOOL_VERSION when electron-builder asks for another one
+      # (the version it wants is named in the failing download URL).
+      - name: Cache electron-builder binaries
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/electron-builder
+          key: electron-builder-linux-appimage-${{ env.APPIMAGE_TOOL_VERSION }}
+      - name: Pre-fetch the AppImage tool
+        shell: bash
+        run: |
+          name="appimage-$APPIMAGE_TOOL_VERSION"
+          dir="$HOME/.cache/electron-builder/appimage/$name"
+          if [ -d "$dir" ]; then
+            echo "$name already cached"
+            exit 0
+          fi
+          archive="$RUNNER_TEMP/$name.7z"
+          for base in \
+            "https://github.com/electron-userland/electron-builder-binaries/releases/download/" \
+            "$BINARIES_MIRROR"; do
+            echo "Fetching $name from $base"
+            if curl -fSL --retry 5 --retry-delay 10 --retry-all-errors \
+                 --connect-timeout 30 -o "$archive" "$base$name/$name.7z"; then
+              mkdir -p "$dir"
+              7z x -o"$dir" "$archive"
+              exit 0
+            fi
+          done
+          echo "::error::could not download $name from GitHub or the mirror"
+          exit 1
       - name: Set version from the release tag
         shell: bash
         run: |
@@ -40,9 +83,21 @@ jobs:
       - name: Install desktop deps
         working-directory: desktop
         run: npm install
+      # Retry: the Electron runtime is still downloaded from GitHub mid-build.
+      # The last attempt routes every electron-builder download at the mirror.
       - name: Build AppImage
         working-directory: desktop
-        run: npm run build:linux
+        shell: bash
+        run: |
+          for attempt in 1 2 3; do
+            if [ "$attempt" = 3 ]; then
+              export ELECTRON_BUILDER_BINARIES_MIRROR="$BINARIES_MIRROR"
+            fi
+            npm run build:linux && exit 0
+            echo "::warning::build:linux attempt $attempt failed, retrying in 30s"
+            sleep 30
+          done
+          exit 1
       - name: Attach AppImage to the release
         uses: softprops/action-gh-release@v3
         with:
@@ -66,9 +121,26 @@ jobs:
       - name: Install desktop deps
         working-directory: desktop
         run: npm install
+      # Same flaky download host as the Linux job (nsis instead of appimage) —
+      # retry, then fall back to the mirror, rather than lose the release.
+      - name: Cache electron-builder binaries
+        uses: actions/cache@v4
+        with:
+          path: ~\AppData\Local\electron-builder\Cache
+          key: electron-builder-windows-nsis
       - name: Build NSIS installer
         working-directory: desktop
-        run: npm run build:win
+        shell: bash
+        run: |
+          for attempt in 1 2 3; do
+            if [ "$attempt" = 3 ]; then
+              export ELECTRON_BUILDER_BINARIES_MIRROR="$BINARIES_MIRROR"
+            fi
+            npm run build:win && exit 0
+            echo "::warning::build:win attempt $attempt failed, retrying in 30s"
+            sleep 30
+          done
+          exit 1
       - name: Attach installer to the release
         uses: softprops/action-gh-release@v3
         with:
