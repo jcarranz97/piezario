@@ -147,7 +147,12 @@ export function MeshPreview({ url }: { url: string }) {
       if (!dragging) {
         return;
       }
-      theta -= (event.clientX - lastX) * 0.01;
+      // Plus, not minus. `placeCamera` puts x on cos(theta) and z on sin(theta),
+      // which is the opposite handedness to the usual x=sin/z=cos spherical
+      // form, so the sign that orbits a camera the natural way there drags it
+      // backwards here. Dragging right has to move the camera to its own left
+      // for the part to follow the pointer instead of running away from it.
+      theta += (event.clientX - lastX) * 0.01;
       // Clamped short of the poles: at exactly vertical the look-at basis is
       // degenerate and the view snaps round.
       phi = Math.min(Math.PI - 0.05, Math.max(0.05, phi - (event.clientY - lastY) * 0.01));
