@@ -65,6 +65,7 @@ lib/
 ├── customize-spec.ts        # the `customize:` frontmatter block (pure — no fs)
 ├── customize.ts             # reads a generator's params; validates a form → argv
 ├── customize-run.ts         # spawns a run, tracks it, caches by parameter hash
+├── threemf-mesh.ts          # 3MF -> coloured meshes for the preview (browser-safe)
 ├── files.ts                 # extension → FileKind → Capability
 └── urls.ts                  # fileUrl() / modelUrl() / fontUrl() / iconUrl()
 scripts/thumbnail.py         # cover.png renderer (own venv)
@@ -131,6 +132,12 @@ Three things are worth knowing before touching this:
 - **Output is not catalog content.** Runs write to `.piezario/generated/<hash>/`
   beside `catalog.yaml`, not into the model's `out/` — a customer's variant is
   an artifact, and customising a model must never edit the catalog.
+- **The preview reads the 3MF, not an STL.** `threemf-mesh.ts` pulls out one
+  mesh per part with its colour and filament slot, so a multi-material print
+  previews as what it is. It imports only `fflate` and runs in the browser:
+  the mesh is hundreds of thousands of floats, and shipping it as JSON from a
+  route would be larger and slower than sending the 3MF the file route
+  already serves. It is the one `lib/` module that is not server-only.
 
 ## Adding a Feature
 

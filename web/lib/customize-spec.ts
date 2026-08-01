@@ -16,6 +16,9 @@
  * the form.
  */
 
+/** A catalog inventory a parameter's options can be drawn from. */
+export type CatalogSource = "fonts" | "filaments";
+
 /** How a parameter is rendered, after click's type is flattened. */
 export type ParamType =
   | "float"
@@ -43,6 +46,8 @@ export interface RawParam {
 export interface ChoiceOption {
   label: string;
   value: string | number | boolean;
+  /** "#rrggbb" when the choice is a colour, so the form can show a swatch. */
+  hex?: string;
 }
 
 /** One field on the rendered form. */
@@ -61,11 +66,15 @@ export interface CustomizeParam {
   required: boolean;
   placeholder: string | null;
   /**
-   * Set when the parameter is bound to a catalog folder (`from_catalog:`).
-   * The form then offers that folder's contents by name and the *path* is
-   * resolved on the server — the browser never names a file on disk.
+   * Set when the parameter is bound to a catalog inventory (`from_catalog:`).
+   *
+   * `fonts` offers the fonts in `fonts/` and resolves the *path* on the server,
+   * so the browser never names a file on disk. `filaments` offers the colours
+   * you actually stock in `catalog.yaml` — a colour you have no spool of is not
+   * a colour you can print, so a free-form picker would only invite orders you
+   * cannot fill.
    */
-  source: "fonts" | null;
+  source: CatalogSource | null;
 }
 
 export interface ParamGroup {
@@ -92,14 +101,12 @@ export interface FieldOverride {
 export interface CustomizeSpec {
   /** Generator script, relative to the model folder. */
   script: string;
-  /** Extra format to write for the preview. Only "stl" is understood. */
-  preview: "stl" | null;
   /** Values that seed the form, overriding the script's own defaults. */
   defaults: Record<string, string | number | boolean>;
   /** Ordered Basic fields, keyed by flag, with their presentation overrides. */
   basic: BasicField[];
-  /** Flags bound to a catalog folder, e.g. `--font-path: fonts`. */
-  fromCatalog: Record<string, "fonts">;
+  /** Flags bound to a catalog inventory, e.g. `--font-path: fonts`. */
+  fromCatalog: Record<string, CatalogSource>;
   /** Per-flag presentation overrides, keyed by flag. */
   fields: Record<string, FieldOverride>;
 }
@@ -112,10 +119,11 @@ export interface BasicField {
 }
 
 /**
- * Parameters the *app* owns, not the customer. Output naming and location are
- * decided by the job runner (every run gets its own content-hashed folder), and
- * the extra formats are requested from `preview:`. Letting a form post these
- * would let it write anywhere the server can write.
+ * Parameters the *app* owns, not the customer. Output naming, location and
+ * formats are decided by the job runner: every run gets its own
+ * content-hashed folder, and the preview reads the 3MF every generator
+ * writes. Letting a form post these would let it write anywhere the server
+ * can write.
  */
 export const APP_OWNED = new Set(["--outdir", "--name", "--stl", "--fcstd"]);
 
@@ -225,16 +233,15 @@ export function parseCustomizeSpec(value: unknown): CustomizeSpec | null {
     };
   }
 
-  const fromCatalog: Record<string, "fonts"> = {};
+  const fromCatalog: Record<string, CatalogSource> = {};
   for (const [key, raw] of Object.entries(asRecord(block.from_catalog))) {
-    if (raw === "fonts") {
-      fromCatalog[normaliseOpt(key)] = "fonts";
+    if (raw === "fonts" || raw === "filaments") {
+      fromCatalog[normaliseOpt(key)] = raw;
     }
   }
 
   return {
     script,
-    preview: block.preview === "stl" ? "stl" : null,
     defaults,
     basic,
     fromCatalog,

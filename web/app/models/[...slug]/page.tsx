@@ -261,7 +261,6 @@ export default async function ModelPage({
                 slug={model.slug}
                 basic={customize.basic}
                 advanced={customize.advanced}
-                hasPreview={customize.preview !== null}
               />
             )}
             {customizeError && (

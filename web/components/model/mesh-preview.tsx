@@ -2,30 +2,63 @@
 
 import { useEffect, useRef, useState } from "react";
 import * as THREE from "three";
-import { STLLoader } from "three/examples/jsm/loaders/STLLoader.js";
+
+import { type MeshPart, parseThreeMfMesh } from "@/lib/threemf-mesh";
 
 /**
- * A turntable preview of a generated mesh.
+ * A turntable preview of a generated part, in the colours it will print in.
  *
- * STL rather than the 3MF, even though the 3MF is the file to print: STL is
- * one mesh in one format with a loader in three.js's own examples, while a
- * Bambu 3MF is a zip whose per-part colours and extruder assignments live in a
- * sidecar config. Reading that properly is worth doing — it is where the
- * multi-colour split lives — but it is a second step, and the shape is the
- * thing to check before ordering.
+ * This reads the **3MF**, not an STL, and that is the whole point. A dog cup
+ * is one object made of three parts, the cup, the paw and the name, and the
+ * paw and the name print in a second filament. An STL is one undifferentiated
+ * mesh, so a preview built on it can only ever be grey, which hides the thing
+ * a customer is actually choosing.
+ *
+ * Each part becomes its own `THREE.Mesh` with its own material, so the split
+ * survives all the way to the screen and the legend underneath can name which
+ * filament slot each colour comes out of.
  *
  * Drag to orbit, wheel to zoom. Written against three directly rather than
- * pulling in react-three-fiber: this is one mesh and one light, and the whole
- * viewer is shorter than the dependency's own setup would be.
+ * pulling in react-three-fiber: this is a handful of meshes and two lights.
  */
 export function MeshPreview({ url }: { url: string }) {
   const mountRef = useRef<HTMLDivElement>(null);
+  const [parts, setParts] = useState<MeshPart[] | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
+
+  // Fetching and parsing is separate from rendering so the legend can be
+  // driven by React while three keeps its own imperative scene.
+  useEffect(() => {
+    let cancelled = false;
+    setParts(null);
+    setError(null);
+
+    fetch(url)
+      .then((response) => {
+        if (!response.ok) {
+          throw new Error(String(response.status));
+        }
+        return response.arrayBuffer();
+      })
+      .then((buffer) => {
+        if (!cancelled) {
+          setParts(parseThreeMfMesh(buffer));
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setError("Could not load the preview.");
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [url]);
 
   useEffect(() => {
     const mount = mountRef.current;
-    if (!mount) {
+    if (!mount || !parts) {
       return;
     }
 
@@ -41,25 +74,55 @@ export function MeshPreview({ url }: { url: string }) {
     renderer.setSize(mount.clientWidth, mount.clientHeight);
     mount.appendChild(renderer.domElement);
 
-    // Two lights and no shadows: the point is to read the geometry, and a
-    // single hard light leaves half of a round part unlit.
-    scene.add(new THREE.HemisphereLight(0xffffff, 0x444455, 2.2));
-    const key = new THREE.DirectionalLight(0xffffff, 1.6);
+    // Two lights and no shadows: the point is to read the geometry and tell
+    // the colours apart, and a single hard light leaves half a round part
+    // unlit and washes the colour out of the other half.
+    scene.add(new THREE.HemisphereLight(0xffffff, 0x444455, 2.0));
+    const key = new THREE.DirectionalLight(0xffffff, 1.5);
     key.position.set(1, 1.4, 1);
     scene.add(key);
 
+    // Parts are modelled in one shared coordinate system, so they are centred
+    // and scaled together — centring each on its own box would scatter them.
     const group = new THREE.Group();
-    scene.add(group);
+    const built: THREE.Mesh[] = [];
+    const bounds = new THREE.Box3();
+
+    for (const part of parts) {
+      const geometry = new THREE.BufferGeometry();
+      geometry.setAttribute("position", new THREE.BufferAttribute(part.positions, 3));
+      geometry.setIndex(new THREE.BufferAttribute(part.indices, 1));
+      geometry.computeVertexNormals();
+      geometry.computeBoundingBox();
+      bounds.union(geometry.boundingBox!);
+
+      const mesh = new THREE.Mesh(
+        geometry,
+        new THREE.MeshStandardMaterial({
+          color: new THREE.Color(part.color),
+          roughness: 0.62,
+          metalness: 0.02,
+        }),
+      );
+      group.add(mesh);
+      built.push(mesh);
+    }
+
+    const centre = bounds.getCenter(new THREE.Vector3());
+    group.position.set(-centre.x, -centre.y, -centre.z);
+    // Modelled Z-up (a print sits on the plate); three is Y-up. Rotating a
+    // wrapper rather than the group keeps the centring above in model space.
+    const pivot = new THREE.Group();
+    pivot.rotation.x = -Math.PI / 2;
+    pivot.add(group);
+    scene.add(pivot);
 
     let frame = 0;
-    let disposed = false;
-    let mesh: THREE.Mesh | null = null;
-
-    // Orbit state, kept here rather than through OrbitControls — two angles
-    // and a radius is the whole interaction.
     let theta = Math.PI / 4;
     let phi = Math.PI / 3;
-    let radius = 100;
+    // Fit the bounding sphere in the vertical field of view, plus a margin.
+    const size = bounds.getSize(new THREE.Vector3());
+    let radius = (size.length() / 2 / Math.sin((camera.fov * Math.PI) / 360)) * 1.05;
     let dragging = false;
     let lastX = 0;
     let lastY = 0;
@@ -72,53 +135,6 @@ export function MeshPreview({ url }: { url: string }) {
       );
       camera.lookAt(0, 0, 0);
     }
-
-    const loader = new STLLoader();
-    loader.load(
-      url,
-      (geometry) => {
-        if (disposed) {
-          geometry.dispose();
-          return;
-        }
-        geometry.computeVertexNormals();
-        // Centre on the part's own bounding box, so the turntable spins about
-        // the model rather than about wherever the plate origin happened to be.
-        geometry.computeBoundingBox();
-        const box = geometry.boundingBox!;
-        const centre = box.getCenter(new THREE.Vector3());
-        geometry.translate(-centre.x, -centre.y, -centre.z);
-
-        mesh = new THREE.Mesh(
-          geometry,
-          new THREE.MeshStandardMaterial({
-            color: 0xb9c2d0,
-            roughness: 0.55,
-            metalness: 0.05,
-            flatShading: false,
-          }),
-        );
-        // These are modelled Z-up (a print sits on the plate); three is Y-up.
-        mesh.rotation.x = -Math.PI / 2;
-        group.add(mesh);
-
-        // Fit the part's bounding sphere in the vertical field of view, plus
-        // a small margin. A flat multiplier of the largest dimension has to
-        // guess, and it guesses badly on a long thin part like a handle.
-        const size = box.getSize(new THREE.Vector3());
-        const sphere = size.length() / 2;
-        radius = (sphere / Math.sin((camera.fov * Math.PI) / 360)) * 1.05;
-        placeCamera();
-        setLoading(false);
-      },
-      undefined,
-      () => {
-        if (!disposed) {
-          setError("Could not load the preview mesh.");
-          setLoading(false);
-        }
-      },
-    );
 
     const canvas = renderer.domElement;
     const onDown = (event: PointerEvent) => {
@@ -178,26 +194,46 @@ export function MeshPreview({ url }: { url: string }) {
     tick();
 
     return () => {
-      disposed = true;
       cancelAnimationFrame(frame);
       resize.disconnect();
       canvas.removeEventListener("pointerdown", onDown);
       canvas.removeEventListener("pointermove", onMove);
       canvas.removeEventListener("pointerup", onUp);
       canvas.removeEventListener("wheel", onWheel);
-      mesh?.geometry.dispose();
-      (mesh?.material as THREE.Material | undefined)?.dispose();
+      for (const mesh of built) {
+        mesh.geometry.dispose();
+        (mesh.material as THREE.Material).dispose();
+      }
       renderer.dispose();
       canvas.remove();
     };
-  }, [url]);
+  }, [parts]);
 
   return (
-    <div className="relative h-80 w-full overflow-hidden rounded-xl border border-[var(--card-border)] bg-[var(--card-bg,transparent)]">
-      <div ref={mountRef} className="size-full touch-none" />
-      {(loading || error) && (
-        <div className="absolute inset-0 grid place-items-center text-sm text-muted">
-          {error ?? "Loading preview…"}
+    <div className="flex flex-col gap-2">
+      <div className="relative h-80 w-full overflow-hidden rounded-xl border border-[var(--card-border)]">
+        <div ref={mountRef} className="size-full touch-none" />
+        {(!parts || error) && (
+          <div className="absolute inset-0 grid place-items-center text-sm text-muted">
+            {error ?? "Loading preview…"}
+          </div>
+        )}
+      </div>
+      {parts && parts.length > 1 && (
+        // Which colour is which part, and which filament slot it comes out of.
+        // The slot is the number that matters at the printer: Bambu Studio
+        // picks filament from it and ignores the colours in the file.
+        <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted">
+          {parts.map((part, index) => (
+            <span key={`${part.name}-${index}`} className="inline-flex items-center gap-1.5">
+              <span
+                className="size-3 rounded-full border border-[var(--card-border)]"
+                style={{ backgroundColor: part.color }}
+              />
+              {part.name}
+              {part.extruder !== null && <span>· slot {part.extruder}</span>}
+            </span>
+          ))}
         </div>
       )}
     </div>

@@ -34,7 +34,7 @@ function param(over: Partial<CustomizeParam> & { name: string; opt: string }): C
 }
 
 function schema(params: CustomizeParam[]): CustomizeSchema {
-  return { slug: "pets/dogcups", script: "dogcup.py", preview: "stl", basic: params, advanced: [] };
+  return { slug: "pets/dogcups", script: "dogcup.py", basic: params, advanced: [] };
 }
 
 describe("parseCustomizeSpec", () => {
@@ -160,6 +160,25 @@ describe("toArgv", () => {
     await expect(
       toArgv(schema([petName]), { pet_name: "x".repeat(201) }),
     ).rejects.toThrow(/too long/);
+  });
+
+  it("only accepts a colour there is a spool for", async () => {
+    // Bound to `filaments:` in catalog.yaml, so the allowlist is the colours
+    // actually stocked. A free-form hex would invite an order that cannot be
+    // filled, which is worse than refusing it here.
+    const bodyColour = param({
+      name: "body_color",
+      opt: "--body-color",
+      type: "text",
+      source: "filaments",
+      choices: [
+        { label: "Black", value: "#1a1a1a", hex: "#1a1a1a" },
+        { label: "White", value: "#f5f5f5", hex: "#f5f5f5" },
+      ],
+    });
+    await expect(
+      toArgv(schema([bodyColour]), { body_color: "#123456" }),
+    ).rejects.toThrow(/no filament in the catalog/i);
   });
 
   it("will not take a filesystem path for a catalog-bound parameter", async () => {

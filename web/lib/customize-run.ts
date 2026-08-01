@@ -93,8 +93,8 @@ async function readOutput(dir: string): Promise<JobFile[]> {
       files.push({ name: entry.name, size: stat.size });
     }
   }
-  // The 3MF is the thing to print and the STL is what the preview loads, so
-  // put those two first and leave the rest in name order.
+  // The 3MF is both the file to print and the one the preview reads, so it
+  // leads; anything else follows in name order.
   const rank = (name: string) =>
     name.endsWith(".3mf") ? 0 : name.endsWith(".stl") ? 1 : 2;
   return files.sort(
@@ -204,12 +204,6 @@ async function execute(
     "--name",
     STEM,
   ];
-  // The preview needs a mesh format a browser can load; the 3MF is always
-  // written, and the STL rides along for the viewer.
-  if (spec.preview === "stl") {
-    args.push("--stl");
-  }
-
   record.status = "running";
   record.startedAt = Date.now();
 

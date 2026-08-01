@@ -7,6 +7,7 @@ import { modelsRoot } from "./catalog";
 import { configPath } from "./config";
 import {
   APP_OWNED,
+  type CatalogSource,
   type ChoiceOption,
   type CustomizeParam,
   type CustomizeSpec,
@@ -16,6 +17,7 @@ import {
   labelFromOpt,
 } from "./customize-spec";
 import { fontsRoot, getFonts } from "./fonts";
+import { getFilaments } from "./inventory";
 
 /**
  * Reading a generator's parameters, and turning a submitted form back into a
@@ -37,7 +39,6 @@ import { fontsRoot, getFonts } from "./fonts";
 export interface CustomizeSchema {
   slug: string;
   script: string;
-  preview: "stl" | null;
   /** What the customer sees first. */
   basic: CustomizeParam[];
   /** Everything else, grouped by flag prefix. */
@@ -160,6 +161,32 @@ async function fontChoices(): Promise<ChoiceOption[]> {
 }
 
 /**
+ * The colours you stock, as choices.
+ *
+ * Deduplicated by hex across every filament product: two spools of the same
+ * black are one choice to a customer. A colour entry with no `hex` cannot be
+ * shown as a swatch and is skipped rather than rendered as a blank chip.
+ */
+function filamentColourChoices(): ChoiceOption[] {
+  const seen = new Map<string, ChoiceOption>();
+  for (const filament of getFilaments()) {
+    for (const colour of filament.colors) {
+      const hex = colour.hex?.trim().toLowerCase();
+      if (!hex || seen.has(hex)) {
+        continue;
+      }
+      seen.set(hex, { label: colour.name || hex, value: hex, hex });
+    }
+  }
+  return [...seen.values()];
+}
+
+/** Options for a parameter bound to a catalog inventory. */
+async function catalogChoices(source: CatalogSource): Promise<ChoiceOption[]> {
+  return source === "fonts" ? fontChoices() : filamentColourChoices();
+}
+
+/**
  * Merge what the script declares with what the frontmatter presents, into the
  * form the page renders.
  */
@@ -195,6 +222,22 @@ export async function customizeSchema(
     const fromScript = param.choices
       ? param.choices.map((choice) => ({ label: choice, value: choice }))
       : null;
+    const choices = source ? await catalogChoices(source) : (declared ?? fromScript);
+
+    // A script's own default need not be something the catalog stocks:
+    // dogcup.py defaults its paw to "blue", and there may be no blue spool.
+    // Offering it as a pre-selected option would promise a colour that
+    // cannot be printed, so the field starts empty instead and the script's
+    // default applies unless the customer picks one of yours.
+    let value: string | number | boolean | null =
+      spec.defaults[param.opt] ?? param.default;
+    if (
+      source &&
+      value !== null &&
+      !choices?.some((choice) => String(choice.value) === String(value))
+    ) {
+      value = null;
+    }
 
     return {
       name: param.name,
@@ -202,8 +245,8 @@ export async function customizeSchema(
       label: field?.label ?? override?.label ?? labelFromOpt(param.opt),
       help: override?.help ?? param.help,
       type: param.type,
-      choices: source === "fonts" ? await fontChoices() : (declared ?? fromScript),
-      default: spec.defaults[param.opt] ?? param.default,
+      choices,
+      default: value,
       defaultHint: param.default_hint,
       required: param.required,
       placeholder: field?.placeholder ?? override?.placeholder ?? null,
@@ -229,7 +272,7 @@ export async function customizeSchema(
   const basicOpts = new Set(basic.map((param) => param.opt));
   const advanced = groupParams(params.filter((p) => !basicOpts.has(p.opt)));
 
-  return { slug, script: spec.script, preview: spec.preview, basic, advanced };
+  return { slug, script: spec.script, basic, advanced };
 }
 
 /**
@@ -285,7 +328,18 @@ export async function toArgv(
     // `--paw-size` unset is "fitted to the floor", and forcing a 0 would mean
     // "no paw at all" instead. Blank text is passed through, because an empty
     // `--pet-name` deliberately means a plain handle.
-    if (text === "" && param.type !== "text") {
+    if (text === "" && (param.type !== "text" || param.source)) {
+      continue;
+    }
+
+    if (param.source === "filaments") {
+      // An allowlist of the hexes in `catalog.yaml`, so the only colours that
+      // can be ordered are colours there is a spool for.
+      const colour = filamentColourChoices().find((c) => c.value === text.toLowerCase());
+      if (!colour) {
+        throw new CustomizeError(`${param.label}: no filament in the catalog is ${text}.`);
+      }
+      argv.push(param.opt, String(colour.value));
       continue;
     }
 

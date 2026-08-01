@@ -78,6 +78,39 @@ function ParamField({
     );
   }
 
+  if (param.source === "filaments" && param.choices) {
+    // Swatches rather than a dropdown. A colour is the one parameter here
+    // whose name is no substitute for seeing it, and the list is short by
+    // construction: it is the spools in the catalog, not a colour wheel.
+    return (
+      <div className="flex flex-col gap-1.5">
+        <span className="text-sm font-medium">{param.label}</span>
+        <div className="flex flex-wrap gap-1.5">
+          {param.choices.map((choice) => {
+            const selected = String(choice.value) === value;
+            return (
+              <button
+                key={String(choice.value)}
+                type="button"
+                title={choice.label}
+                aria-label={choice.label}
+                aria-pressed={selected}
+                onClick={() => onChange(String(choice.value))}
+                className={`size-7 rounded-full border-2 transition ${
+                  selected
+                    ? "border-[var(--accent)] scale-110"
+                    : "border-[var(--card-border)] hover:border-[var(--accent)]"
+                }`}
+                style={{ backgroundColor: choice.hex ?? String(choice.value) }}
+              />
+            );
+          })}
+        </div>
+        {hint && <span className="text-xs text-muted">{hint}</span>}
+      </div>
+    );
+  }
+
   return (
     <label className="flex flex-col gap-1.5">
       <span className="text-sm font-medium">{param.label}</span>
@@ -124,12 +157,10 @@ export function Customizer({
   slug,
   basic,
   advanced,
-  hasPreview,
 }: {
   slug: string;
   basic: CustomizeParam[];
   advanced: ParamGroup[];
-  hasPreview: boolean;
 }) {
   const allParams = [...basic, ...advanced.flatMap((group) => group.params)];
 
@@ -192,9 +223,11 @@ export function Customizer({
   }
 
   const busy = starting || job?.status === "queued" || job?.status === "running";
+  // The 3MF is what the preview reads: it keeps the part split, so the paw
+  // and the name arrive as their own meshes in their own colours.
   const preview =
     job?.status === "done"
-      ? job.files.find((file) => file.name.endsWith(".stl"))
+      ? job.files.find((file) => file.name.endsWith(".3mf"))
       : undefined;
 
   return (
@@ -301,9 +334,7 @@ export function Customizer({
 
       {job?.status === "done" && (
         <div className="flex flex-col gap-4">
-          {hasPreview && preview && (
-            <MeshPreview url={fileUrlFor(job.id, preview.name)} />
-          )}
+          {preview && <MeshPreview url={fileUrlFor(job.id, preview.name)} />}
           <div className="flex flex-wrap gap-2">
             {job.files.map((file) => (
               // A plain anchor, not a Button: this is a download, and only a
