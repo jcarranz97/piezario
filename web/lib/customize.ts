@@ -224,19 +224,29 @@ export async function customizeSchema(
       : null;
     const choices = source ? await catalogChoices(source) : (declared ?? fromScript);
 
-    // A script's own default need not be something the catalog stocks:
-    // dogcup.py defaults its paw to "blue", and there may be no blue spool.
-    // Offering it as a pre-selected option would promise a colour that
-    // cannot be printed, so the field starts empty instead and the script's
-    // default applies unless the customer picks one of yours.
+    // A script's own default need not be usable by the control that renders
+    // it, and the two bindings fail differently.
+    //
+    // `fonts` is a closed list: a family installed on my machine is not a
+    // font in the catalog, and pre-selecting it would name something the
+    // customer cannot see or check.
+    //
+    // `filaments` is open — any colour may be ordered — but the picker parses
+    // hex, and dogcup.py defaults its paw to the CSS name "blue". So the test
+    // there is the *format*, not the inventory.
+    //
+    // Either way the field starts empty rather than wrong, and an empty one
+    // means the script's own default applies.
     let value: string | number | boolean | null =
       spec.defaults[param.opt] ?? param.default;
-    if (
-      source &&
-      value !== null &&
-      !choices?.some((choice) => String(choice.value) === String(value))
-    ) {
-      value = null;
+    if (value !== null && source === "fonts") {
+      if (!choices?.some((choice) => String(choice.value) === String(value))) {
+        value = null;
+      }
+    } else if (value !== null && source === "filaments") {
+      if (typeof value !== "string" || !HEX_COLOUR.test(value)) {
+        value = null;
+      }
     }
 
     return {
@@ -288,6 +298,9 @@ const MAX_MAGNITUDE = 100_000;
 /** Longest a text parameter may be. A name on a handle, not an essay. */
 const MAX_TEXT = 200;
 
+/** The only shape a colour may take on its way to a generator. */
+const HEX_COLOUR = /^#[0-9a-f]{6}$/i;
+
 /**
  * Turn submitted values into `argv`.
  *
@@ -333,13 +346,22 @@ export async function toArgv(
     }
 
     if (param.source === "filaments") {
-      // An allowlist of the hexes in `catalog.yaml`, so the only colours that
-      // can be ordered are colours there is a spool for.
-      const colour = filamentColourChoices().find((c) => c.value === text.toLowerCase());
-      if (!colour) {
-        throw new CustomizeError(`${param.label}: no filament in the catalog is ${text}.`);
+      // Any colour, not only a stocked one. The catalog's spools are the
+      // presets in the picker because they are the answer to most orders,
+      // but they are a shortcut rather than a limit: a customer asking for a
+      // colour that is not on the shelf is a thing to price, not a thing to
+      // refuse in a form.
+      //
+      // Still strict about the *shape*. Six hex digits and nothing else is
+      // the only form that reaches the generator, so this remains an exact
+      // allowlist of what a colour may look like.
+      const hex = text.toLowerCase();
+      if (!HEX_COLOUR.test(hex)) {
+        throw new CustomizeError(
+          `${param.label} must be a colour like #c0392b.`,
+        );
       }
-      argv.push(param.opt, String(colour.value));
+      argv.push(param.opt, hex);
       continue;
     }
 

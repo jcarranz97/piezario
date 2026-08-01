@@ -132,6 +132,12 @@ Three things are worth knowing before touching this:
 - **Output is not catalog content.** Runs write to `.piezario/generated/<hash>/`
   beside `catalog.yaml`, not into the model's `out/` — a customer's variant is
   an artifact, and customising a model must never edit the catalog.
+- **`from_catalog: filaments` is presets, not a limit.** The picker offers the
+  colours in `catalog.yaml` as swatches because they answer most orders, but
+  any colour can be chosen and submitted. Validation is on the *shape*
+  (`#rrggbb`, nothing else), not the inventory — contrast `fonts`, which is a
+  closed list because a font that is not in the catalog cannot be resolved to
+  a file at all.
 - **The preview reads the 3MF, not an STL.** `threemf-mesh.ts` pulls out one
   mesh per part with its colour and filament slot, so a multi-material print
   previews as what it is. It imports only `fflate` and runs in the browser:

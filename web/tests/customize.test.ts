@@ -162,10 +162,7 @@ describe("toArgv", () => {
     ).rejects.toThrow(/too long/);
   });
 
-  it("only accepts a colour there is a spool for", async () => {
-    // Bound to `filaments:` in catalog.yaml, so the allowlist is the colours
-    // actually stocked. A free-form hex would invite an order that cannot be
-    // filled, which is worse than refusing it here.
+  describe("a colour parameter", () => {
     const bodyColour = param({
       name: "body_color",
       opt: "--body-color",
@@ -176,9 +173,33 @@ describe("toArgv", () => {
         { label: "White", value: "#f5f5f5", hex: "#f5f5f5" },
       ],
     });
-    await expect(
-      toArgv(schema([bodyColour]), { body_color: "#123456" }),
-    ).rejects.toThrow(/no filament in the catalog/i);
+
+    it("accepts a colour that is not one of the catalog's presets", async () => {
+      // The presets are a shortcut, not a limit: a customer asking for a
+      // colour that is not on the shelf is something to price, not something
+      // to refuse in a form.
+      expect(await toArgv(schema([bodyColour]), { body_color: "#123456" })).toEqual([
+        "--body-color",
+        "#123456",
+      ]);
+    });
+
+    it("normalises case so the same colour hashes to the same job", async () => {
+      expect(await toArgv(schema([bodyColour]), { body_color: "#AABBCC" })).toEqual([
+        "--body-color",
+        "#aabbcc",
+      ]);
+    });
+
+    it("still refuses anything that is not six hex digits", async () => {
+      // Open on values, strict on shape — that is what keeps a free picker
+      // from widening what can reach the command line.
+      for (const bad of ["blue", "#12345", "#1234567", "red; rm -rf /", "rgb(1,2,3)"]) {
+        await expect(
+          toArgv(schema([bodyColour]), { body_color: bad }),
+        ).rejects.toThrow(/must be a colour/i);
+      }
+    });
   });
 
   it("will not take a filesystem path for a catalog-bound parameter", async () => {

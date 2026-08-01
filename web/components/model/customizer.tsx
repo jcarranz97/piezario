@@ -1,6 +1,17 @@
 "use client";
 
-import { Alert, Button, Chip, Switch } from "@heroui/react";
+import {
+  Alert,
+  Button,
+  Chip,
+  ColorArea,
+  ColorPicker,
+  ColorSlider,
+  ColorSwatch,
+  ColorSwatchPicker,
+  Label,
+  Switch,
+} from "@heroui/react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { LuDownload, LuSettings2 } from "react-icons/lu";
 
@@ -25,6 +36,12 @@ import { MeshPreview } from "./mesh-preview";
 
 const FIELD =
   "w-full rounded-lg border border-[var(--card-border)] bg-transparent px-3 py-2 text-sm outline-none focus:border-[var(--accent)]";
+
+/** A colour the picker can parse. CSS names like "blue" are not one. */
+const HEX = /^#[0-9a-fA-F]{6}$/;
+
+/** Shown when a colour field has no usable value yet; never submitted alone. */
+const PICKER_FALLBACK = "#cccccc";
 
 export interface JobView {
   id: string;
@@ -78,34 +95,71 @@ function ParamField({
     );
   }
 
-  if (param.source === "filaments" && param.choices) {
-    // Swatches rather than a dropdown. A colour is the one parameter here
-    // whose name is no substitute for seeing it, and the list is short by
-    // construction: it is the spools in the catalog, not a colour wheel.
+  if (param.source === "filaments") {
+    // A full picker, with the catalog's own colours as the presets inside it.
+    //
+    // The presets are the spools you actually stock, which is the answer for
+    // most orders and the one that needs no thought. The area and hue slider
+    // are there because customers ask for colours that are not on the shelf,
+    // and refusing to *show* such a colour does not make the request go away
+    // — it just moves the conversation off the page.
+    const swatch = HEX.test(value) ? value : PICKER_FALLBACK;
+    // Name the colour when it is one of yours; otherwise the hex is the only
+    // honest label, and it doubles as the flag that this is a special order.
+    const preset = param.choices?.find(
+      (choice) => String(choice.value).toLowerCase() === value.toLowerCase(),
+    );
+
     return (
       <div className="flex flex-col gap-1.5">
         <span className="text-sm font-medium">{param.label}</span>
-        <div className="flex flex-wrap gap-1.5">
-          {param.choices.map((choice) => {
-            const selected = String(choice.value) === value;
-            return (
-              <button
-                key={String(choice.value)}
-                type="button"
-                title={choice.label}
-                aria-label={choice.label}
-                aria-pressed={selected}
-                onClick={() => onChange(String(choice.value))}
-                className={`size-7 rounded-full border-2 transition ${
-                  selected
-                    ? "border-[var(--accent)] scale-110"
-                    : "border-[var(--card-border)] hover:border-[var(--accent)]"
-                }`}
-                style={{ backgroundColor: choice.hex ?? String(choice.value) }}
-              />
-            );
-          })}
-        </div>
+        <ColorPicker
+          value={swatch}
+          onChange={(colour) => onChange(colour.toString("hex").toLowerCase())}
+        >
+          <ColorPicker.Trigger className="flex items-center gap-2">
+            <ColorSwatch size="lg" />
+            <Label className="cursor-pointer text-sm">
+              {preset ? preset.label : swatch}
+            </Label>
+          </ColorPicker.Trigger>
+          <ColorPicker.Popover>
+            <ColorArea
+              aria-label={`${param.label} area`}
+              className="max-w-full"
+              colorSpace="hsb"
+              xChannel="saturation"
+              yChannel="brightness"
+            >
+              <ColorArea.Thumb />
+            </ColorArea>
+            <ColorSlider
+              aria-label={`${param.label} hue`}
+              channel="hue"
+              className="gap-1 px-1"
+              colorSpace="hsb"
+            >
+              <Label>Hue</Label>
+              <ColorSlider.Output className="text-muted" />
+              <ColorSlider.Track>
+                <ColorSlider.Thumb />
+              </ColorSlider.Track>
+            </ColorSlider>
+            {param.choices && param.choices.length > 0 && (
+              <ColorSwatchPicker className="justify-center px-1" size="xs">
+                {param.choices.map((choice) => (
+                  <ColorSwatchPicker.Item
+                    key={String(choice.value)}
+                    color={String(choice.value)}
+                    aria-label={choice.label}
+                  >
+                    <ColorSwatchPicker.Swatch />
+                  </ColorSwatchPicker.Item>
+                ))}
+              </ColorSwatchPicker>
+            )}
+          </ColorPicker.Popover>
+        </ColorPicker>
         {hint && <span className="text-xs text-muted">{hint}</span>}
       </div>
     );
