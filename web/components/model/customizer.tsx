@@ -13,8 +13,9 @@ import {
   Switch,
   Tooltip,
 } from "@heroui/react";
+import type { KeyboardEvent } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { LuDownload, LuRefreshCw, LuSettings2 } from "react-icons/lu";
+import { LuDownload, LuPlus, LuRefreshCw, LuSettings2, LuX } from "react-icons/lu";
 
 import type { CustomizeParam, ParamGroup } from "@/lib/customize-spec";
 
@@ -54,14 +55,269 @@ export interface JobView {
   cached: boolean;
 }
 
-/** The starting value of one field, as a form string. */
-function initialValue(param: CustomizeParam): string {
+/** The starting value of one field: a string, or rows for a repeatable one. */
+function initialValue(param: CustomizeParam): string | string[] {
+  if (param.multiple) {
+    return param.entries;
+  }
   if (param.type === "flag") {
     return param.default === true ? "on" : "";
   }
   return param.default === null || param.default === undefined
     ? ""
     : String(param.default);
+}
+
+/**
+ * One entry of a repeatable option, split back into the boxes that made it.
+ *
+ * Split from the RIGHT, once per gap between parts, which mirrors what the
+ * script does when it reads the entry back: `--word` is a name and a count, so
+ * `MARIA:JOSE:2` is the name `MARIA:JOSE` seen twice, not the name `MARIA`.
+ */
+function splitEntry(entry: string, parts: number, separator: string): string[] {
+  if (parts <= 1 || !separator) {
+    return [entry];
+  }
+  const out: string[] = [];
+  let rest = entry;
+  for (let i = 0; i < parts - 1; i += 1) {
+    const at = rest.lastIndexOf(separator);
+    if (at < 0) {
+      break;
+    }
+    out.unshift(rest.slice(at + separator.length));
+    rest = rest.slice(0, at);
+  }
+  out.unshift(rest);
+  while (out.length < parts) {
+    out.push("");
+  }
+  return out;
+}
+
+/**
+ * The boxes joined back into the one string the flag receives.
+ *
+ * Trailing empties are dropped, so a name with the count left blank sends
+ * `JUAN` rather than `JUAN:` — the script's own default for the count is then
+ * what applies, which is what an empty box should mean.
+ */
+function joinEntry(values: string[], separator: string): string {
+  const kept = [...values];
+  while (kept.length > 1 && kept[kept.length - 1].trim() === "") {
+    kept.pop();
+  }
+  return kept.join(separator);
+}
+
+/**
+ * Is this a row somebody added and never filled?
+ *
+ * Judged on the FIRST part alone, which is the one that identifies the entry:
+ * a name with no count is still a name, a count with no name is not an order.
+ */
+function rowIsBlank(cells: string[]): boolean {
+  return (cells[0] ?? "").trim() === "";
+}
+
+/**
+ * The form's state, as the payload the generator is asked for.
+ *
+ * Unfilled rows are dropped here rather than sent. They are not a rare
+ * accident — pressing Enter hands you a fresh one every time, and the last one
+ * is still sitting there when you press Generate — and they are not harmless:
+ * an untouched row on the keycap form joins to `:1`, which is a perfectly
+ * valid entry meaning "one cap with no letter on it". A blank keycap would
+ * arrive on the plate with nobody having asked for one, which is the kind of
+ * wrong that gets printed before it gets noticed.
+ *
+ * Dropping them here also keeps them out of the staleness signature, so adding
+ * a row you have not filled in yet does not announce that the preview is out
+ * of date.
+ */
+function payloadFor(
+  params: CustomizeParam[],
+  values: Record<string, string | string[]>,
+): Record<string, string | string[]> {
+  const out: Record<string, string | string[]> = { ...values };
+  for (const param of params) {
+    const spec = param.multiple;
+    const rows = out[param.name];
+    if (!spec || !Array.isArray(rows)) {
+      continue;
+    }
+    out[param.name] = rows.filter(
+      (row) => !rowIsBlank(splitEntry(row, spec.parts.length, spec.separator)),
+    );
+  }
+  return out;
+}
+
+/**
+ * A repeatable option: rows you add to and remove from, like the Supplies card.
+ *
+ * The rows are held as the joined strings that go on the command line, not as
+ * objects — the form's job is to make the separator invisible, not to invent a
+ * second representation of an entry that then has to be converted somewhere.
+ */
+function MultiField({
+  param,
+  rows,
+  onChange,
+}: {
+  param: CustomizeParam;
+  rows: string[];
+  onChange: (next: string[]) => void;
+}) {
+  // Which box to put the cursor in after the next render, as `row:part`. A row
+  // added by Enter is useless if you then have to reach for the mouse to type
+  // in it, and a newly mounted input cannot focus itself from the handler that
+  // created it — it does not exist yet.
+  const [focusKey, setFocusKey] = useState<string | null>(null);
+  const boxes = useRef(new Map<string, HTMLInputElement | null>());
+
+  useEffect(() => {
+    if (!focusKey) {
+      return;
+    }
+    boxes.current.get(focusKey)?.focus();
+    setFocusKey(null);
+  }, [focusKey, rows.length]);
+
+  const spec = param.multiple;
+  if (!spec) {
+    return null;
+  }
+
+  const cellsOf = (row: number) =>
+    splitEntry(rows[row] ?? "", spec.parts.length, spec.separator);
+
+  const setPart = (row: number, part: number, next: string) => {
+    const cells = cellsOf(row);
+    cells[part] = next;
+    const updated = [...rows];
+    updated[row] = joinEntry(cells, spec.separator);
+    onChange(updated);
+  };
+
+  const add = () => {
+    // A new row opens on whatever the script said a fresh entry looks like —
+    // for `--word` that is a count of 1, which is the answer nine times in ten.
+    onChange([
+      ...rows,
+      joinEntry(spec.parts.map((part) => part.default ?? ""), spec.separator),
+    ]);
+    setFocusKey(`${rows.length}:0`);
+  };
+
+  /**
+   * Enter carries on down the list rather than doing nothing.
+   *
+   * On the last row it adds another and puts the cursor in it, which is how
+   * you type a list of names without touching the mouse. On any earlier row it
+   * steps to the next one instead of inserting into the middle — Enter in a
+   * list means "next", and a row appearing between two filled ones would be a
+   * surprise every time.
+   *
+   * An unfilled row adds nothing: hitting Enter twice would otherwise leave a
+   * trail of empty rows behind the cursor.
+   */
+  const onEnter = (event: KeyboardEvent<HTMLInputElement>, row: number) => {
+    if (event.key !== "Enter") {
+      return;
+    }
+    // There is no <form> here, but Enter in a text input is a submit gesture
+    // in enough browsers' muscle memory that letting it bubble is a risk.
+    event.preventDefault();
+    if (row < rows.length - 1) {
+      setFocusKey(`${row + 1}:0`);
+      return;
+    }
+    if (rowIsBlank(cellsOf(row))) {
+      return;
+    }
+    add();
+  };
+
+  return (
+    <div className="flex flex-col gap-2 sm:col-span-2">
+      <span className="text-sm font-medium">{param.label}</span>
+      {param.help && <span className="text-xs text-muted">{param.help}</span>}
+
+      {rows.length === 0 && spec.emptyLabel && (
+        <span className="text-xs text-muted">{spec.emptyLabel}</span>
+      )}
+
+      {rows.map((row, index) => {
+        const cells = splitEntry(row, spec.parts.length, spec.separator);
+        return (
+          <div key={index} className="flex items-end gap-2">
+            {spec.parts.map((part, at) => (
+              <label
+                key={part.key}
+                className={`flex flex-col gap-1 ${
+                  part.width === "narrow" ? "w-20 shrink-0" : "flex-1"
+                }`}
+              >
+                {/* The part labels sit on every row rather than once above
+                    them: the rows are added and removed, so a header would be
+                    a label pointing at whatever happened to be first. */}
+                <span className="text-xs text-muted">{part.label}</span>
+                {part.type === "choice" ? (
+                  // The options come from the PARAM, not the part: the part
+                  // only says which catalog it is bound to, and the server
+                  // filled the list from that binding when it built the
+                  // schema. An icon row is a picker over `icons/`.
+                  <select
+                    value={cells[at] ?? ""}
+                    onChange={(event) => setPart(index, at, event.target.value)}
+                    className={FIELD}
+                  >
+                    <option value="">{part.placeholder ?? "—"}</option>
+                    {(param.choices ?? []).map((choice) => (
+                      <option key={String(choice.value)} value={String(choice.value)}>
+                        {choice.label}
+                      </option>
+                    ))}
+                  </select>
+                ) : (
+                  <input
+                    ref={(node) => {
+                      boxes.current.set(`${index}:${at}`, node);
+                    }}
+                    type={part.type === "text" ? "text" : "number"}
+                    step={part.type === "float" ? "any" : undefined}
+                    min={part.type === "integer" ? 1 : undefined}
+                    value={cells[at] ?? ""}
+                    placeholder={part.placeholder ?? undefined}
+                    onChange={(event) => setPart(index, at, event.target.value)}
+                    onKeyDown={(event) => onEnter(event, index)}
+                    className={FIELD}
+                  />
+                )}
+              </label>
+            ))}
+            <button
+              type="button"
+              aria-label={`Remove ${param.label} ${index + 1}`}
+              onClick={() => onChange(rows.filter((_, at) => at !== index))}
+              className="mb-1 rounded-lg border border-[var(--card-border)] p-2 text-muted hover:border-[var(--accent)]"
+            >
+              <LuX className="size-3.5" />
+            </button>
+          </div>
+        );
+      })}
+
+      <div>
+        <Button size="sm" variant="ghost" onPress={add}>
+          <LuPlus className="size-3.5" />
+          {spec.addLabel}
+        </Button>
+      </div>
+    </div>
+  );
 }
 
 function fileUrlFor(jobId: string, name: string): string {
@@ -231,6 +487,37 @@ function ParamField({
   );
 }
 
+/**
+ * One field, whichever kind it is. The two views render the same thing, so the
+ * choice between a box and a list of rows is made in one place.
+ */
+function Field({
+  param,
+  value,
+  onChange,
+}: {
+  param: CustomizeParam;
+  value: string | string[] | undefined;
+  onChange: (next: string | string[]) => void;
+}) {
+  if (param.multiple) {
+    return (
+      <MultiField
+        param={param}
+        rows={Array.isArray(value) ? value : []}
+        onChange={onChange}
+      />
+    );
+  }
+  return (
+    <ParamField
+      param={param}
+      value={typeof value === "string" ? value : ""}
+      onChange={onChange}
+    />
+  );
+}
+
 export function Customizer({
   slug,
   basic,
@@ -242,7 +529,7 @@ export function Customizer({
 }) {
   const allParams = [...basic, ...advanced.flatMap((group) => group.params)];
 
-  const [values, setValues] = useState<Record<string, string>>(() =>
+  const [values, setValues] = useState<Record<string, string | string[]>>(() =>
     Object.fromEntries(allParams.map((param) => [param.name, initialValue(param)])),
   );
   const [showAdvanced, setShowAdvanced] = useState(false);
@@ -262,16 +549,44 @@ export function Customizer({
    */
   const [generatedFor, setGeneratedFor] = useState<string | null>(null);
 
+  // What actually gets asked for, which is not quite what is on screen: rows
+  // nobody filled in are not part of the order. See payloadFor.
+  const payload = useMemo(() => payloadFor(allParams, values), [allParams, values]);
+
   // Key order is not stable across edits, so sort it: two identical parameter
   // sets must produce the same string or everything below misfires.
   const signature = useMemo(
-    () => JSON.stringify(values, Object.keys(values).sort()),
-    [values],
+    () => JSON.stringify(payload, Object.keys(payload).sort()),
+    [payload],
   );
 
-  const setValue = useCallback((name: string, next: string) => {
-    setValues((current) => ({ ...current, [name]: next }));
-  }, []);
+  const setValue = useCallback((name: string, next: string | string[]) => {
+    setValues((current) => {
+      const updated = { ...current, [name]: next };
+      // Only a single-valued field can control another one: a dependent
+      // default is keyed by the controller's value, and a list has none.
+      if (typeof next !== "string") {
+        return updated;
+      }
+      // Fields whose default follows this one move WITH it. The joint study's
+      // revision letter is C for the snap and B for the tongue: a box that
+      // keeps saying C after the connector changes engraves the wrong letter
+      // on real parts, and the parts are printed by the time anyone notices.
+      //
+      // It overwrites whatever was typed there, deliberately. The alternative
+      // is tracking whether each field was hand-edited and leaving stale ones
+      // alone, which preserves a value that is now wrong — and silently, which
+      // is the failure this exists to prevent. Re-typing a letter is cheap;
+      // re-printing a set of coupons is not.
+      for (const dependent of allParams) {
+        if (dependent.dependsOn?.name !== name) {
+          continue;
+        }
+        updated[dependent.name] = dependent.dependsOn.map[next] ?? "";
+      }
+      return updated;
+    });
+  }, [allParams]);
 
   // Polling, not streaming: a run is tens of seconds and the only thing that
   // changes is a status and a log tail, so a one-second GET is plenty and
@@ -303,7 +618,7 @@ export function Customizer({
       const response = await fetch("/api/customize", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ slug, values }),
+        body: JSON.stringify({ slug, values: payload }),
       });
       const body = await response.json();
       if (!response.ok) {
@@ -366,10 +681,10 @@ export function Customizer({
 
       <div className="grid gap-4 sm:grid-cols-2">
         {basic.map((param) => (
-          <ParamField
+          <Field
             key={param.name}
             param={param}
-            value={values[param.name] ?? ""}
+            value={values[param.name]}
             onChange={(next) => setValue(param.name, next)}
           />
         ))}
@@ -384,10 +699,10 @@ export function Customizer({
             </legend>
             <div className="grid gap-4 sm:grid-cols-2">
               {group.params.map((param) => (
-                <ParamField
+                <Field
                   key={param.name}
                   param={param}
-                  value={values[param.name] ?? ""}
+                  value={values[param.name]}
                   onChange={(next) => setValue(param.name, next)}
                 />
               ))}

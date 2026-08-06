@@ -29,6 +29,70 @@ export type ParamType =
   | "choice"
   | "path";
 
+/**
+ * A default that follows another field's value, as the script declares it.
+ *
+ * Click cannot express this — a CLI has no live form to react to. A form does,
+ * and one field standing in for a choice made above it is wrong for every
+ * choice but one: the joint study's revision letter is `C` for the snap and `B`
+ * for the tongue, and a box that keeps saying `C` engraves the wrong letter on
+ * real parts.
+ *
+ * Keyed by the *controlling* flag and its values. The script owns the mapping,
+ * for the same reason it owns the rest of the form: it can derive it from what
+ * it already reads, so it cannot drift from what it builds.
+ */
+export interface DependentDefault {
+  /** The flag whose value decides this one, e.g. `--variant`. */
+  on: string;
+  /** Controlling value → the default this field takes. */
+  map: Record<string, string>;
+}
+
+/**
+ * One box inside one entry of a repeatable option.
+ *
+ * A `--word` entry is a name AND a count. On a command line that is one
+ * string with a colon in it; on a form it has to be two boxes, or the colon is
+ * a rule only the script's author knows.
+ */
+export interface MultiFieldPart {
+  key: string;
+  label: string;
+  type: "text" | "integer" | "float" | "choice";
+  placeholder: string | null;
+  default: string | null;
+  /** `narrow` is a count next to a name, not a field of its own width. */
+  width: "narrow" | "wide";
+  /**
+   * Set when this box alone is bound to a catalog inventory.
+   *
+   * The whole option cannot carry the binding once it is a list: an `--icon`
+   * entry is an icon AND a count, and only the first half is an icon id. So
+   * the binding lives on the part, the browser sends the id, and the path is
+   * resolved server-side — which is what keeps it from being an
+   * arbitrary-file parameter.
+   */
+  source: CatalogSource | null;
+}
+
+/**
+ * How a repeatable option is rendered: a list of rows you add to and remove
+ * from, the way the Supplies card works.
+ *
+ * The script declares it (`MULTI_FIELDS`), because the script is what parses
+ * an entry back apart — a separator declared anywhere else is a second copy of
+ * a rule, and the two would drift.
+ */
+export interface MultiField {
+  addLabel: string;
+  /** Shown in place of an empty list. */
+  emptyLabel: string | null;
+  /** What joins the parts back into the one string the flag receives. */
+  separator: string;
+  parts: MultiFieldPart[];
+}
+
 /** One option, as `describe_generator.py` reports it. */
 export interface RawParam {
   name: string;
@@ -37,7 +101,9 @@ export interface RawParam {
   secondary: string | null;
   help: string;
   required: boolean;
-  default: string | number | boolean | null;
+  /** click's `multiple=True`: the flag may be given once per value. */
+  multiple?: boolean;
+  default: string | number | boolean | (string | number | boolean)[] | null;
   default_hint: string | null;
   type: ParamType;
   choices?: string[];
@@ -84,6 +150,36 @@ export interface CustomizeParam {
    * cannot fill.
    */
   source: CatalogSource | null;
+  /**
+   * Set when this field's default follows another field, keyed by that
+   * field's *name* rather than its flag — the form's state is keyed by name.
+   */
+  dependsOn: { name: string; map: Record<string, string> } | null;
+  /**
+   * Set when the flag may be given more than once, in which case the field is
+   * a list of rows rather than a box. Non-null *is* the test for "repeatable";
+   * a flag click marked `multiple` but the script did not describe still gets
+   * one here, with a single unnamed part.
+   */
+  multiple: MultiField | null;
+  /** Rows the list opens with. Only meaningful when `multiple` is set. */
+  entries: string[];
+}
+
+/**
+ * The rendering for a repeatable option the script said nothing else about:
+ * one plain box per row.
+ */
+export function defaultMultiField(label: string): MultiField {
+  return {
+    addLabel: `Add ${label.toLowerCase()}`,
+    emptyLabel: null,
+    separator: "",
+    parts: [
+      { key: "value", label, type: "text", placeholder: null, default: null,
+        width: "wide", source: null },
+    ],
+  };
 }
 
 export interface ParamGroup {
@@ -110,8 +206,13 @@ export interface FieldOverride {
 export interface CustomizeSpec {
   /** Generator script, relative to the model folder. */
   script: string;
-  /** Values that seed the form, overriding the script's own defaults. */
-  defaults: Record<string, string | number | boolean>;
+  /**
+   * Values that seed the form, overriding the script's own defaults.
+   *
+   * A list is only meaningful for a repeatable flag, where it seeds the rows —
+   * `--word: [JUAN:3, ORIANA:4]` opens the form on that order.
+   */
+  defaults: Record<string, string | number | boolean | string[]>;
   /** Ordered Basic fields, keyed by flag, with their presentation overrides. */
   basic: BasicField[];
   /** Flags bound to a catalog inventory, e.g. `--font-path: fonts`. */
@@ -191,8 +292,24 @@ export function parseCustomizeSpec(value: unknown): CustomizeSpec | null {
     return null;
   }
 
-  const defaults: Record<string, string | number | boolean> = {};
+  const defaults: Record<string, string | number | boolean | string[]> = {};
   for (const [key, raw] of Object.entries(asRecord(block.defaults))) {
+    if (Array.isArray(raw)) {
+      // Seeds the rows of a repeatable flag. Entries that are not scalars are
+      // dropped rather than stringified into "[object Object]".
+      const rows = raw
+        .filter(
+          (entry): entry is string | number | boolean =>
+            typeof entry === "string" ||
+            typeof entry === "number" ||
+            typeof entry === "boolean",
+        )
+        .map(String);
+      if (rows.length > 0) {
+        defaults[normaliseOpt(key)] = rows;
+      }
+      continue;
+    }
     if (
       typeof raw === "string" ||
       typeof raw === "number" ||

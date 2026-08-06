@@ -11,8 +11,12 @@ import {
   type ChoiceOption,
   type CustomizeParam,
   type CustomizeSpec,
+  type DependentDefault,
+  type MultiField,
+  type MultiFieldPart,
   type ParamGroup,
   type RawParam,
+  defaultMultiField,
   groupParams,
   labelFromOpt,
 } from "./customize-spec";
@@ -111,12 +115,75 @@ function run(
  * Introspection is slow — importing the script pulls in OCC — and the answer
  * only changes when the script does, so it is cached against the file's mtime.
  */
-const schemaCache = new Map<string, { mtimeMs: number; params: RawParam[] }>();
+interface GeneratorSchema {
+  params: RawParam[];
+  /** Keyed by the flag whose default follows another field. */
+  dependentDefaults: Record<string, DependentDefault>;
+  /** Keyed by the repeatable flag whose one entry it describes. */
+  multiFields: Record<string, MultiField>;
+}
+
+/**
+ * `MULTI_FIELDS` as the describer reports it (snake_case, as Python wrote it),
+ * mapped onto the camelCase the rest of the app reads.
+ */
+interface RawMultiField {
+  add_label?: unknown;
+  empty_label?: unknown;
+  separator?: unknown;
+  parts?: unknown;
+}
+
+function readMultiFields(raw: Record<string, RawMultiField>): Record<string, MultiField> {
+  const out: Record<string, MultiField> = {};
+  for (const [opt, spec] of Object.entries(raw ?? {})) {
+    const parts = Array.isArray(spec?.parts) ? spec.parts : [];
+    const mapped = parts.flatMap((part: Record<string, unknown>) => {
+      const key = typeof part?.key === "string" ? part.key : "";
+      if (!key) {
+        return [];
+      }
+      const type: MultiFieldPart["type"] =
+        part.type === "integer" || part.type === "float" || part.type === "choice"
+          ? part.type
+          : "text";
+      const source: CatalogSource | null =
+        part.source === "fonts" || part.source === "filaments" ||
+        part.source === "icons"
+          ? part.source
+          : null;
+      return [
+        {
+          key,
+          label: typeof part.label === "string" ? part.label : key,
+          type,
+          placeholder:
+            typeof part.placeholder === "string" ? part.placeholder : null,
+          default: typeof part.default === "string" ? part.default : null,
+          width: part.width === "narrow" ? ("narrow" as const) : ("wide" as const),
+          source,
+        },
+      ];
+    });
+    if (mapped.length === 0) {
+      continue;
+    }
+    out[opt] = {
+      addLabel: typeof spec.add_label === "string" ? spec.add_label : "Add",
+      emptyLabel: typeof spec.empty_label === "string" ? spec.empty_label : null,
+      separator: typeof spec.separator === "string" ? spec.separator : "",
+      parts: mapped,
+    };
+  }
+  return out;
+}
+
+const schemaCache = new Map<string, { mtimeMs: number } & GeneratorSchema>();
 
 async function describeGenerator(
   dir: string,
   script: string,
-): Promise<RawParam[]> {
+): Promise<GeneratorSchema> {
   const scriptPath = path.join(dir, script);
   const stat = fs.statSync(scriptPath, { throwIfNoEntry: false });
   if (!stat) {
@@ -125,7 +192,11 @@ async function describeGenerator(
 
   const cached = schemaCache.get(scriptPath);
   if (cached && cached.mtimeMs === stat.mtimeMs) {
-    return cached.params;
+    return {
+      params: cached.params,
+      dependentDefaults: cached.dependentDefaults,
+      multiFields: cached.multiFields,
+    };
   }
 
   const describer = path.join(process.cwd(), "scripts", "describe_generator.py");
@@ -135,7 +206,12 @@ async function describeGenerator(
     { cwd: dir, timeoutMs: 120_000 },
   );
 
-  let parsed: { params?: RawParam[]; error?: string };
+  let parsed: {
+    params?: RawParam[];
+    dependent_defaults?: Record<string, DependentDefault>;
+    multi_fields?: Record<string, RawMultiField>;
+    error?: string;
+  };
   try {
     parsed = JSON.parse(stdout);
   } catch {
@@ -147,8 +223,17 @@ async function describeGenerator(
     throw new CustomizeError(parsed.error ?? `${script} could not be inspected.`);
   }
 
-  schemaCache.set(scriptPath, { mtimeMs: stat.mtimeMs, params: parsed.params });
-  return parsed.params;
+  // Absent on every generator that does not declare it, which is all of them
+  // but one — an older describer simply omits the key.
+  const dependentDefaults = parsed.dependent_defaults ?? {};
+  const multiFields = readMultiFields(parsed.multi_fields ?? {});
+  schemaCache.set(scriptPath, {
+    mtimeMs: stat.mtimeMs,
+    params: parsed.params,
+    dependentDefaults,
+    multiFields,
+  });
+  return { params: parsed.params, dependentDefaults, multiFields };
 }
 
 /** The fonts in `fonts/`, as choices, for a parameter bound to that folder. */
@@ -208,7 +293,10 @@ export async function customizeSchema(
   spec: CustomizeSpec,
 ): Promise<CustomizeSchema> {
   const dir = modelDir(slug);
-  const raw = await describeGenerator(dir, spec.script);
+  const { params: raw, dependentDefaults, multiFields } = await describeGenerator(
+    dir,
+    spec.script,
+  );
 
   const basicByOpt = new Map(spec.basic.map((field) => [field.opt, field]));
 
@@ -256,8 +344,23 @@ export async function customizeSchema(
     //
     // Either way the field starts empty rather than wrong, and an empty one
     // means the script's own default applies.
-    let value: string | number | boolean | null =
-      spec.defaults[param.opt] ?? param.default;
+    // A repeatable flag has a LIST for a value, so its starting state is rows
+    // rather than a value. Click's own default for one is `()`, which is the
+    // honest answer — no rows, and the script applies whatever it does when
+    // the flag is absent.
+    const multiple = param.multiple
+      ? (multiFields[param.opt] ?? defaultMultiField(labelFromOpt(param.opt)))
+      : null;
+    const seed = spec.defaults[param.opt] ?? param.default;
+    const entries = multiple
+      ? (Array.isArray(seed) ? seed : seed === null ? [] : [seed]).map(String)
+      : [];
+
+    let value: string | number | boolean | null = multiple
+      ? null
+      : Array.isArray(seed)
+        ? null
+        : seed;
     if (value !== null && source === "fonts") {
       if (!choices?.some((choice) => String(choice.value) === String(value))) {
         value = null;
@@ -281,6 +384,11 @@ export async function customizeSchema(
       required: param.required,
       placeholder: field?.placeholder ?? override?.placeholder ?? null,
       source,
+      // Filled in below: it needs the controlling parameter, which may not be
+      // built yet when this one is.
+      dependsOn: null,
+      multiple,
+      entries,
     };
   };
 
@@ -288,6 +396,30 @@ export async function customizeSchema(
     (p): p is CustomizeParam => p !== null,
   );
   const byOpt = new Map(params.map((param) => [param.opt, param]));
+
+  // Resolve `--revision follows --variant` into names, which is what the
+  // form's state is keyed by. A dependency naming a flag that was hidden,
+  // app-owned or simply absent is dropped: a controller no one can see would
+  // leave the field frozen at whatever it started as, which is worse than not
+  // pre-filling it at all.
+  for (const [opt, dep] of Object.entries(dependentDefaults)) {
+    const param = byOpt.get(opt);
+    const controller = byOpt.get(dep.on);
+    if (!param || !controller || controller.opt === param.opt) {
+      continue;
+    }
+    param.dependsOn = { name: controller.name, map: dep.map };
+    // Seed the field from the controller's own starting value, so the form
+    // opens showing the right letter rather than filling one in only after
+    // the customer touches something.
+    const start = controller.default;
+    if (start !== null && start !== undefined) {
+      const seeded = dep.map[String(start)];
+      if (seeded !== undefined) {
+        param.default = seeded;
+      }
+    }
+  }
 
   // Basic keeps the frontmatter's order — it is a deliberate reading order,
   // not the order the options happen to be declared in.
@@ -324,8 +456,85 @@ const MAX_MAGNITUDE = 1e12;
 /** Longest a text parameter may be. A name on a handle, not an essay. */
 const MAX_TEXT = 200;
 
+/**
+ * Most rows one repeatable field may post.
+ *
+ * Not a limit on what can be built — the generators refuse their own excesses
+ * far better, and with a number that means something ("that is 1200 keycaps").
+ * This is only a bound on how much argv one form may produce, so a page left
+ * looping cannot hand `spawn` a hundred thousand arguments.
+ */
+const MAX_ENTRIES = 200;
+
 /** The only shape a colour may take on its way to a generator. */
 const HEX_COLOUR = /^#[0-9a-f]{6}$/i;
+
+/**
+ * One entry of a repeatable option, split back into its parts.
+ *
+ * From the RIGHT, once per gap, which is the same rule the form joins by and
+ * the generator reads back with. All three have to agree or the separator
+ * means a different thing in each: `--icon` is a path and a count, and a path
+ * may perfectly well contain a colon.
+ */
+function splitEntry(entry: string, parts: number, separator: string): string[] {
+  if (parts <= 1 || !separator) {
+    return [entry];
+  }
+  const out: string[] = [];
+  let rest = entry;
+  for (let i = 0; i < parts - 1; i += 1) {
+    const at = rest.lastIndexOf(separator);
+    if (at < 0) {
+      break;
+    }
+    out.unshift(rest.slice(at + separator.length));
+    rest = rest.slice(0, at);
+  }
+  out.unshift(rest);
+  while (out.length < parts) {
+    out.push("");
+  }
+  return out;
+}
+
+/**
+ * One catalog-bound value, as the generator should receive it.
+ *
+ * The browser sends an id; this is where it becomes a path. Factored out of
+ * the single-value branches below because a repeatable option needs the same
+ * resolution applied to one PART of each row — and a second copy of the rule
+ * would be a second place for `--icon` to disagree with `--pattern` about what
+ * an icon id is.
+ */
+async function resolveFromCatalog(
+  source: CatalogSource,
+  text: string,
+  param: CustomizeParam,
+): Promise<string> {
+  if (source === "fonts") {
+    const font = (await getFonts()).find((entry) => entry.id === text);
+    if (!font) {
+      throw new CustomizeError(`No such font in the catalog: ${text}`);
+    }
+    return path.join(fontsRoot(), font.relPath);
+  }
+  if (source === "icons") {
+    const icon = (await getIcons()).find((entry) => entry.id === text);
+    if (icon) {
+      return path.join(iconsRoot(), icon.relPath);
+    }
+    if (param.choices?.some((choice) => String(choice.value) === text)) {
+      return text;
+    }
+    throw new CustomizeError(`${param.label}: ${text} is not one of the options.`);
+  }
+  const hex = text.toLowerCase();
+  if (!HEX_COLOUR.test(hex)) {
+    throw new CustomizeError(`${param.label} must be a colour like #c0392b.`);
+  }
+  return hex;
+}
 
 /**
  * Turn submitted values into `argv`.
@@ -351,6 +560,60 @@ export async function toArgv(
     if (!param) {
       // Silently dropped, not an error: the form posts whatever it rendered,
       // and a stale field after a script edit should not fail the whole run.
+      continue;
+    }
+
+    // A repeatable flag is emitted once per row, which is the whole point of
+    // it: `--word JUAN:3 --word ORIANA:4`. Joining the rows into one value
+    // would build a single keycap named "JUAN:3,ORIANA:4", which is worse
+    // than failing because it succeeds.
+    if (param.multiple) {
+      const rows = Array.isArray(raw) ? raw : raw === undefined || raw === null ? [] : [raw];
+      if (rows.length > MAX_ENTRIES) {
+        throw new CustomizeError(
+          `${param.label}: ${rows.length} entries is more than this form will send.`,
+        );
+      }
+      const parts = param.multiple.parts;
+      const separator = param.multiple.separator;
+      const bound = parts.some((part) => part.source);
+
+      for (const row of rows) {
+        let entry = typeof row === "string" ? row.trim() : String(row ?? "");
+        // A row left blank is a row someone added and did not fill. Passing it
+        // through would ask the generator for a nameless item; dropping it is
+        // what "I changed my mind about that row" means.
+        if (entry === "") {
+          continue;
+        }
+        if (entry.length > MAX_TEXT) {
+          throw new CustomizeError(`${param.label} has an entry that is too long.`);
+        }
+        // eslint-disable-next-line no-control-regex
+        if (/[\u0000-\u001f\u007f]/.test(entry)) {
+          throw new CustomizeError(
+            `${param.label} contains characters it cannot use.`,
+          );
+        }
+        // A row whose parts are individually bound to a catalog folder: the
+        // browser sent ids, and the paths are resolved HERE. Split with the
+        // same right-to-left rule the client joins by and the script reads
+        // back, or the three disagree about what the separator separates.
+        if (bound) {
+          const cells = splitEntry(entry, parts.length, separator);
+          for (let at = 0; at < parts.length; at += 1) {
+            const source = parts[at].source;
+            if (source && cells[at]) {
+              cells[at] = await resolveFromCatalog(source, cells[at], param);
+            }
+          }
+          while (cells.length > 1 && cells[cells.length - 1].trim() === "") {
+            cells.pop();
+          }
+          entry = cells.join(separator);
+        }
+        argv.push(param.opt, entry);
+      }
       continue;
     }
 
@@ -487,13 +750,75 @@ export function generatedRoot(): string {
 }
 
 /**
+ * A fingerprint of every generator in the catalog: path, size and mtime of
+ * each `.py` under `models/`, hashed.
+ *
+ * It is deliberately catalog-wide rather than per-model. A generator is not a
+ * closed thing — `color-swatch-container/swatch_container.py` imports the card
+ * from `color-swatch/color_swatch.py` so the two can never disagree about how
+ * thick a card is, and several models keep a copy of `bambu3mf.py`. There is
+ * no honest way to find a script's real inputs from the outside short of
+ * running it, so this takes the safe side of the trade: any script edit
+ * anywhere invalidates every cached job.
+ *
+ * That costs one regeneration after an edit. The other direction cost an
+ * afternoon: a fixed generator, a re-run that never ran, and a stale file that
+ * looked exactly like a fresh one.
+ *
+ * `stat` only — the contents are never read. A few hundred stats is well under
+ * a millisecond, and mtime is what a text editor changes.
+ */
+function generatorsStamp(): string {
+  const hash = crypto.createHash("sha256");
+  const walk = (dir: string): void => {
+    let entries: fs.Dirent[];
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return; // unreadable folder: nothing to fingerprint, not an error
+    }
+    for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        // Skip the heavy folders that cannot change what a generator builds.
+        if (entry.name === ".venv" || entry.name === "__pycache__") {
+          continue;
+        }
+        walk(full);
+      } else if (entry.name.endsWith(".py")) {
+        try {
+          const st = fs.statSync(full);
+          hash.update(`${full}:${st.size}:${st.mtimeMs}\n`);
+        } catch {
+          // Raced with a delete; leaving it out is the correct fingerprint.
+        }
+      }
+    }
+  };
+  try {
+    walk(modelsRoot());
+  } catch {
+    // No catalog configured yet. An empty fingerprint is the honest answer:
+    // it degrades to the old argv-only key rather than throwing on the way to
+    // a download.
+  }
+  return hash.digest("hex");
+}
+
+/**
  * A stable id for one set of parameters, so the same request twice is free.
- * The argv *is* the identity of the output — same flags, same geometry.
+ *
+ * The argv is *most* of the identity of the output, and for a long time this
+ * hashed nothing else — which was wrong in a way that only shows up after you
+ * edit a generator. The flags had not changed, so the hash had not changed, so
+ * the run was served from cache and the fixed script never ran. The bug looked
+ * like it had survived the fix. So the script fingerprint is in the key too:
+ * same flags AND same generators, same geometry.
  */
 export function paramsHash(slug: string, argv: string[]): string {
   return crypto
     .createHash("sha256")
-    .update(JSON.stringify([slug, argv]))
+    .update(JSON.stringify([slug, argv, generatorsStamp()]))
     .digest("hex")
     .slice(0, 16);
 }
