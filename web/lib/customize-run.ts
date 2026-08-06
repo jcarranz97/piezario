@@ -197,6 +197,10 @@ async function execute(
   }
 
   const args = [
+    // -u because stdout here is a pipe, and CPython block-buffers those: a
+    // generator that prints its progress line by line would still arrive in
+    // one lump at exit, and the log panel would sit empty for the whole run.
+    "-u",
     path.join(dir, spec.script),
     ...argv,
     "--outdir",

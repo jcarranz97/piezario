@@ -125,6 +125,76 @@ Three things are worth knowing before touching this:
   was bound to a catalog folder with `from_catalog:` — in which case the client
   sends an id and the path is resolved server-side. This layer is written to
   survive the move to a hosted backend; the route around it is not.
+- **A field's default can follow another field**, which is the one thing click
+  cannot express — a CLI has no live form to react to, you just pass the flag.
+  A generator declares it as a module-level `DEPENDENT_DEFAULTS`:
+
+  ```python
+  DEPENDENT_DEFAULTS = {
+      "--revision": {"on": "--variant", "map": {"snap": "C", "tongue": "B"}},
+  }
+  ```
+
+  `describe_generator.py` reports it, `customize.ts` resolves the flags to
+  field *names* and seeds the dependent from the controller's own default, and
+  `customizer.tsx` moves it whenever the controller changes. **The script owns
+  the map**, for the same reason it owns the rest of the form: it can derive it
+  from whatever it already reads, so it cannot drift. The joint study reads its
+  revision letters out of its own README.
+
+  Changing the controller **overwrites** whatever was typed in the dependent,
+  deliberately. Leaving a hand-edited value alone preserves one that is now
+  wrong, silently — and for the case this was built for the value is engraved
+  on physical parts. Re-typing a letter is cheap; re-printing coupons is not. A
+  controller value with no mapping clears the field, which is what makes the
+  script fall back to its own record.
+- **A repeatable flag becomes a list of rows**, the way the Supplies card
+  works. `click`'s `multiple=True` already says the flag may be given once per
+  value, and `describe_generator.py` reports it — `toArgv` then emits
+  `--word JUAN:3 --word ORIANA:4` rather than one value with a comma in it,
+  which would silently build a single item named after the whole list.
+
+  What click *cannot* say is that one entry is a name **and** a count. On a
+  command line you type the colon; on a form, a single box where the colon
+  means something is a box only the script's author can fill. So a generator
+  may describe one entry as a module-level `MULTI_FIELDS`:
+
+  ```python
+  MULTI_FIELDS = {
+      "--word": {
+          "add_label": "Add name",
+          "empty_label": "No names yet.",
+          "separator": ":",
+          "parts": [
+              {"key": "text", "label": "Name", "type": "text"},
+              {"key": "times", "label": "Times", "type": "integer",
+               "default": "1", "width": "narrow"},
+          ],
+      },
+  }
+  ```
+
+  Same ownership rule as `DEPENDENT_DEFAULTS`: the separator lives next to the
+  parser that reads the entry back apart, so the two cannot disagree about what
+  a colon separates. A repeatable flag with no declaration is still a list —
+  just of plain single boxes, which is right for a flag taking one value per
+  occurrence.
+
+  **Enter adds the next row** and puts the cursor in it, so a list of names is
+  typed without reaching for the mouse; on a row that is not the last one it
+  steps down instead of inserting into the middle. A row whose **first part is
+  blank** is one somebody added and did not fill, and it is dropped before the
+  payload is posted. That is not tidiness: pressing Enter hands you a fresh row
+  every time and the last one is still there when you press Generate, and an
+  untouched row on the keycap form joins to `:1` — a valid entry meaning "one
+  cap with no letter on it". A blank keycap would arrive on the plate with
+  nobody having asked for one.
+
+  The rows are held in form state as the **joined strings**, not as objects.
+  The form's job is to make the separator invisible, not to invent a second
+  representation of an entry that then has to be converted on the way out.
+  Splitting for display goes from the **right**, once per gap, mirroring what
+  the script does: `MARIA:JOSE:2` is the name `MARIA:JOSE` twice.
 - **A run is started and polled, never awaited.** Generators take seconds to
   minutes, and one runs at a time (OCC is single-threaded and CPU-bound). The
   job id is a hash of the model plus the exact argv, so the same parameters

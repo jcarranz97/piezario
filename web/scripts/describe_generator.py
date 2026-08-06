@@ -123,6 +123,12 @@ def describe(param: click.Parameter) -> dict | None:
         "secondary": param.secondary_opts[0] if param.secondary_opts else None,
         "help": param.help or "",
         "required": bool(param.required),
+        # `multiple=True` — the flag may be given more than once, and every
+        # occurrence counts. A form has to render that as a list you add rows
+        # to, not as one box: collapsing it to a single value would silently
+        # drop everything after the first, which on a keycap order is every
+        # name but one.
+        "multiple": bool(getattr(param, "multiple", False)),
         "default": jsonable(param.default),
         # `show_default="fitted to the handle"` is a human explanation of what
         # happens when the option is left alone, and it is often the only place
@@ -135,6 +141,131 @@ def describe(param: click.Parameter) -> dict | None:
     return spec
 
 
+def dependent_defaults(module) -> dict:
+    """Options whose default follows the value of another option.
+
+    Click has no way to say "my default depends on that field", because a CLI
+    has no live form to react to — you just pass the flag. A form does, and the
+    difference matters: one field standing in for a choice the customer already
+    made above it is a field that is wrong for every choice but one.
+
+    So a script may declare it, as `DEPENDENT_DEFAULTS`:
+
+        DEPENDENT_DEFAULTS = {
+            "--revision": {"on": "--variant",
+                           "map": {"snap": "C", "tongue": "B"}},
+        }
+
+    The SCRIPT owns the mapping, not this repo and not the frontmatter, for the
+    same reason the form itself is read from click: the script can derive it
+    from whatever it already reads, so it cannot drift from what it builds. The
+    joint study reads its letters out of its own README.
+
+    Anything malformed is dropped rather than raising. A bad hint is a field
+    that does not pre-fill; a raise here is a model that cannot be customised
+    at all.
+    """
+    raw = getattr(module, "DEPENDENT_DEFAULTS", None)
+    if not isinstance(raw, dict):
+        return {}
+    out = {}
+    for opt, spec in raw.items():
+        if not isinstance(opt, str) or not isinstance(spec, dict):
+            continue
+        on = spec.get("on")
+        mapping = spec.get("map")
+        if not isinstance(on, str) or not isinstance(mapping, dict):
+            continue
+        pairs = {
+            str(k): v for k, v in mapping.items()
+            if isinstance(v, (str, int, float, bool))
+        }
+        if pairs:
+            out[opt] = {"on": on, "map": pairs}
+    return out
+
+
+def multi_fields(module) -> dict:
+    """How a repeatable option's ONE ENTRY is shaped.
+
+    `multiple=True` says a flag may be given more than once. It cannot say that
+    one occurrence is a name AND a count joined by a colon, because on a command
+    line you just type the colon. A form has no such affordance: a single box
+    where the colon means something is a box only its author can fill.
+
+    So a script may declare it, as `MULTI_FIELDS`:
+
+        MULTI_FIELDS = {
+            "--word": {
+                "add_label": "Add name",
+                "separator": ":",
+                "parts": [
+                    {"key": "text", "label": "Name", "type": "text"},
+                    {"key": "times", "label": "Times", "type": "integer",
+                     "default": "1", "width": "narrow"},
+                ],
+            },
+        }
+
+    The SCRIPT owns it, like DEPENDENT_DEFAULTS above and for the same reason:
+    it sits beside the parser that reads the entry back, so the two cannot
+    disagree about what a colon separates.
+
+    A repeatable option with no declaration is still a list — just of plain
+    single boxes, which is the right rendering for a flag that takes one value
+    per occurrence. Anything malformed is dropped rather than raised: a bad
+    declaration should cost the two-box layout, not the whole customiser.
+    """
+    raw = getattr(module, "MULTI_FIELDS", None)
+    if not isinstance(raw, dict):
+        return {}
+
+    out = {}
+    for opt, spec in raw.items():
+        if not isinstance(opt, str) or not isinstance(spec, dict):
+            continue
+        parts = []
+        for part in spec.get("parts") or ():
+            if not isinstance(part, dict):
+                continue
+            key = part.get("key")
+            if not isinstance(key, str) or not key:
+                continue
+            parts.append({
+                "key": key,
+                "label": str(part.get("label") or key),
+                "type": part.get("type")
+                        if part.get("type") in ("text", "integer", "float",
+                                                "choice")
+                        else "text",
+                # A part may bind to a catalog folder on its own, which the
+                # whole option cannot do once it is a list: `--icon` carries an
+                # icon AND a count, and only the first half is an icon id. The
+                # browser sends the id; the path is resolved server-side, which
+                # is what keeps this from being an arbitrary-file parameter.
+                "source": (part["source"]
+                           if part.get("source") in ("fonts", "filaments", "icons")
+                           else None),
+                "placeholder": (str(part["placeholder"])
+                                if part.get("placeholder") is not None else None),
+                "default": (str(part["default"])
+                            if part.get("default") is not None else None),
+                "width": "narrow" if part.get("width") == "narrow" else "wide",
+            })
+        if not parts:
+            continue
+        out[opt] = {
+            "add_label": str(spec.get("add_label") or "Add"),
+            "empty_label": (str(spec["empty_label"])
+                            if spec.get("empty_label") is not None else None),
+            # Only meaningful with two parts or more; a one-part entry is its
+            # own value and joining it with anything would corrupt it.
+            "separator": str(spec.get("separator") or ""),
+            "parts": parts,
+        }
+    return out
+
+
 def main() -> int:
     if len(sys.argv) != 2:
         print(json.dumps({"error": "usage: describe_generator.py SCRIPT.py"}))
@@ -142,7 +273,8 @@ def main() -> int:
 
     script = Path(sys.argv[1]).resolve()
     try:
-        command = find_command(load_module(script))
+        module = load_module(script)
+        command = find_command(module)
     except Exception as exc:
         print(json.dumps({"error": f"{type(exc).__name__}: {exc}"}))
         return 1
@@ -153,6 +285,8 @@ def main() -> int:
         "command": command.name,
         "help": (command.help or "").strip(),
         "params": params,
+        "dependent_defaults": dependent_defaults(module),
+        "multi_fields": multi_fields(module),
     }))
     return 0
 

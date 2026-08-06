@@ -1,7 +1,11 @@
-import { describe, expect, it } from "vitest";
+import { cpSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import type { CustomizeSchema } from "../lib/customize";
-import { CustomizeError, toArgv } from "../lib/customize";
+import { CustomizeError, paramsHash, toArgv } from "../lib/customize";
 import type { CustomizeParam } from "../lib/customize-spec";
 import {
   APP_OWNED,
@@ -9,6 +13,7 @@ import {
   labelFromOpt,
   parseCustomizeSpec,
 } from "../lib/customize-spec";
+import { TEST_CONFIG } from "./setup";
 
 /**
  * The customiser's two halves.
@@ -30,6 +35,9 @@ function param(over: Partial<CustomizeParam> & { name: string; opt: string }): C
     required: false,
     placeholder: null,
     source: null,
+    dependsOn: null,
+    multiple: null,
+    entries: [],
     ...over,
   };
 }
@@ -91,6 +99,72 @@ describe("groupParams", () => {
   });
 });
 
+describe("a dependent default", () => {
+  /**
+   * The rule the form implements, kept here so it is asserted somewhere a
+   * component test cannot reach: when the controlling field moves, every field
+   * that follows it moves too, overwriting whatever was there.
+   *
+   * It overwrites on purpose. Leaving a hand-typed value alone preserves one
+   * that is now wrong — the joint study's revision letter is C for the snap
+   * and B for the tongue, and a stale C is engraved on physical parts.
+   */
+  function applyDependents(
+    params: CustomizeParam[],
+    values: Record<string, string>,
+    name: string,
+    next: string,
+  ): Record<string, string> {
+    const updated = { ...values, [name]: next };
+    for (const dependent of params) {
+      if (dependent.dependsOn?.name !== name) continue;
+      updated[dependent.name] = dependent.dependsOn.map[next] ?? "";
+    }
+    return updated;
+  }
+
+  const params = [
+    param({ name: "variant", opt: "--variant", type: "choice" }),
+    param({
+      name: "revision",
+      opt: "--revision",
+      type: "text",
+      default: "C",
+      dependsOn: { name: "variant", map: { snap: "C", tongue: "B", all: "" } },
+    }),
+  ];
+
+  it("moves the dependent field when its controller changes", () => {
+    const after = applyDependents(params, { variant: "snap", revision: "C" },
+      "variant", "tongue");
+    expect(after.revision).toBe("B");
+  });
+
+  it("overwrites a hand-typed value rather than leaving it stale", () => {
+    const after = applyDependents(params, { variant: "snap", revision: "Z" },
+      "variant", "tongue");
+    expect(after.revision).toBe("B");
+  });
+
+  it("clears the field where the controller has no mapping", () => {
+    // "all" spans every letter, so there is no single one to pre-fill; blank
+    // is what makes the script fall back to its own per-part record.
+    const after = applyDependents(params, { variant: "snap", revision: "C" },
+      "variant", "all");
+    expect(after.revision).toBe("");
+
+    const unknown = applyDependents(params, { variant: "snap", revision: "C" },
+      "variant", "screw");
+    expect(unknown.revision).toBe("");
+  });
+
+  it("leaves unrelated fields alone", () => {
+    const after = applyDependents(params, { variant: "snap", revision: "C" },
+      "revision", "D");
+    expect(after).toEqual({ variant: "snap", revision: "D" });
+  });
+});
+
 describe("toArgv", () => {
   const cups = param({ name: "cups", opt: "--cups", type: "float" });
   const petName = param({ name: "pet_name", opt: "--pet-name", type: "text" });
@@ -101,6 +175,64 @@ describe("toArgv", () => {
   it("passes through what the schema declares", async () => {
     const argv = await toArgv(schema([cups, petName]), { cups: "0.75", pet_name: "Luna" });
     expect(argv).toEqual(["--cups", "0.75", "--pet-name", "Luna"]);
+  });
+
+  describe("a repeatable option", () => {
+    const word = param({
+      name: "words",
+      opt: "--word",
+      type: "text",
+      multiple: {
+        addLabel: "Add name",
+        emptyLabel: null,
+        separator: ":",
+        parts: [
+          { key: "text", label: "Name", type: "text", placeholder: null,
+            default: null, width: "wide", source: null },
+          { key: "times", label: "Times", type: "integer", placeholder: null,
+            default: "1", width: "narrow", source: null },
+        ],
+      },
+    });
+
+    it("emits the flag once per row", async () => {
+      // The whole point: three JUANs and four ORIANAs is two occurrences of
+      // --word, not one value with a comma in it.
+      expect(
+        await toArgv(schema([word]), { words: ["JUAN:3", "ORIANA:4"] }),
+      ).toEqual(["--word", "JUAN:3", "--word", "ORIANA:4"]);
+    });
+
+    it("drops the rows nobody filled in", async () => {
+      expect(
+        await toArgv(schema([word]), { words: ["JUAN:3", "", "   "] }),
+      ).toEqual(["--word", "JUAN:3"]);
+    });
+
+    it("sends nothing at all when the list is empty", async () => {
+      // Which is not the same as sending an empty value: the flag is absent,
+      // so the script's own default applies.
+      expect(await toArgv(schema([word]), { words: [] })).toEqual([]);
+    });
+
+    it("accepts a lone value as one row", async () => {
+      expect(await toArgv(schema([word]), { words: "JUAN:3" })).toEqual([
+        "--word",
+        "JUAN:3",
+      ]);
+    });
+
+    it("refuses control characters and absurd lengths, per row", async () => {
+      await expect(
+        toArgv(schema([word]), { words: ["JU\u0007AN", "ORIANA"] }),
+      ).rejects.toThrow(/cannot use/);
+      await expect(
+        toArgv(schema([word]), { words: ["x".repeat(201)] }),
+      ).rejects.toThrow(/too long/);
+      await expect(
+        toArgv(schema([word]), { words: Array(201).fill("A") }),
+      ).rejects.toThrow(/more than this form will send/);
+    });
   });
 
   it("drops a parameter the schema does not declare", async () => {
@@ -226,5 +358,63 @@ describe("toArgv", () => {
     await expect(
       toArgv(schema([fontPath]), { font_path: "../../../etc/passwd" }),
     ).rejects.toThrow(/No such font/);
+  });
+});
+
+describe("paramsHash", () => {
+  /**
+   * The cache key. This exists because it was once wrong in a way nothing
+   * catches: the key was the flags alone, so editing a generator and asking
+   * for the same part again returned the file the OLD script had written. The
+   * fix looks like it did not work, and the file looks freshly built.
+   */
+  const vault = path.dirname(TEST_CONFIG);
+  const generator = path.join(vault, "models", "gadgets", "box", "box.py");
+  let temp: string;
+
+  beforeEach(() => {
+    // A throwaway copy, so touching a generator never touches the fixture.
+    temp = mkdtempSync(path.join(os.tmpdir(), "piezario-hash-"));
+    cpSync(vault, temp, { recursive: true });
+    process.env.CATALOG_CONFIG = path.join(temp, path.basename(TEST_CONFIG));
+  });
+
+  afterEach(() => {
+    process.env.CATALOG_CONFIG = TEST_CONFIG;
+    rmSync(temp, { recursive: true, force: true });
+  });
+
+  const tempGenerator = () =>
+    path.join(temp, path.relative(vault, generator));
+
+  it("is stable for the same flags and the same generators", () => {
+    expect(paramsHash("gadgets/box", ["--size", "40"])).toBe(
+      paramsHash("gadgets/box", ["--size", "40"]),
+    );
+  });
+
+  it("separates different flags, models and argument order", () => {
+    const base = paramsHash("gadgets/box", ["--size", "40"]);
+    expect(paramsHash("gadgets/box", ["--size", "41"])).not.toBe(base);
+    expect(paramsHash("decor/vase", ["--size", "40"])).not.toBe(base);
+  });
+
+  it("changes when a generator is edited, so a fixed script is never cached over", () => {
+    const before = paramsHash("gadgets/box", ["--size", "40"]);
+    writeFileSync(tempGenerator(), "# edited\n", { flag: "a" });
+    expect(paramsHash("gadgets/box", ["--size", "40"])).not.toBe(before);
+  });
+
+  it("changes when a generator in ANOTHER model is edited", () => {
+    // Not paranoia: color-swatch-container imports the card's own script from
+    // color-swatch, and several models keep a copy of bambu3mf.py. A key that
+    // only watched this model's folder would serve a stale case forever.
+    const before = paramsHash("gadgets/box", ["--size", "40"]);
+    writeFileSync(path.join(temp, "models", "decor", "vase", "vase.py"), "x = 1\n");
+    expect(paramsHash("gadgets/box", ["--size", "40"])).not.toBe(before);
+  });
+
+  it("is still a 16-character hex id, so jobDir keeps accepting it", () => {
+    expect(paramsHash("gadgets/box", ["--size", "40"])).toMatch(/^[0-9a-f]{16}$/);
   });
 });
