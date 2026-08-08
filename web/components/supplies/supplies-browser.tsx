@@ -1,20 +1,10 @@
 "use client";
 
-import {
-  Alert,
-  Button,
-  Card,
-  Chip,
-  FieldError,
-  Input,
-  Label,
-  Modal,
-  SearchField,
-  TextField,
-} from "@heroui/react";
+import { Button, Card, Chip, Modal, SearchField } from "@heroui/react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useActionState, useEffect, useMemo, useState } from "react";
-import { LuPencil, LuPlus, LuTrash2 } from "react-icons/lu";
+import { LuExternalLink, LuPencil, LuPlus, LuTrash2 } from "react-icons/lu";
 
 import {
   type InventoryState,
@@ -22,25 +12,13 @@ import {
   saveSupplyAction,
 } from "@/actions/inventory.action";
 import type { SupplyItem } from "@/lib/inventory";
+import { supplyUrl } from "@/lib/urls";
+
+import { domain, money, perUnit, plural } from "./format";
+import { SupplyForm } from "./supply-form";
+import { SupplyThumb } from "./supply-thumb";
 
 const initialState: InventoryState = { error: null };
-
-/** Common units offered in the datalist; any free-form value is accepted too. */
-const UNITS = ["piece", "gram", "ml", "cm", "meter", "pair", "set"];
-
-/** A required-field asterisk for a HeroUI Label. */
-function Req() {
-  return (
-    <span aria-hidden className="text-[var(--accent-strong)]">
-      {" "}
-      *
-    </span>
-  );
-}
-
-function money(value: number | null, currency: string): string {
-  return value === null ? "—" : `${currency}${value.toFixed(2)}`;
-}
 
 /**
  * The Supplies tab: consumables that aren't printed — rings, chains, glue.
@@ -72,6 +50,7 @@ export function SuppliesBrowser({
       router.refresh();
     }
   }, [state, router]);
+
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -161,33 +140,81 @@ export function SuppliesBrowser({
         </Card>
       ) : (
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-          {filtered.map((item) => (
+          {filtered.map((item) => {
+            // The newest purchase is what the card describes: what you last
+            // paid, and the shop to reorder from.
+            const latest = item.purchases[0] ?? null;
+            const counted = item.purchases.filter((p) => p.useForPrice).length;
+            const link = item.purchases.find((p) => p.url)?.url ?? null;
+            return (
             <Card key={item.id}>
               <Card.Content className="flex flex-col gap-3">
-                <div className="flex items-start gap-2">
-                  <div className="min-w-0 flex-1">
-                    <p className="truncate font-medium">{item.name}</p>
-                    {item.category && (
-                      <p className="truncate text-xs text-muted">
-                        {item.category}
-                      </p>
-                    )}
-                  </div>
+                <div className="flex items-start gap-3">
+                  {/* The photo and the name lead to the supply's own page —
+                      not the whole card, which would swallow the buttons. */}
+                  <Link
+                    href={supplyUrl(item.id)}
+                    className="flex min-w-0 flex-1 items-start gap-3"
+                  >
+                    <SupplyThumb image={item.image} />
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate font-medium hover:underline">
+                        {item.name}
+                      </span>
+                      {item.category && (
+                        <span className="block truncate text-xs text-muted">
+                          {item.category}
+                        </span>
+                      )}
+                    </span>
+                  </Link>
                   {item.unit && (
                     <Chip size="sm" variant="soft">
                       {item.unit}
                     </Chip>
                   )}
                 </div>
-                <div className="flex items-center justify-between">
-                  <span className="text-sm font-medium">
-                    {money(item.price, currency)}
-                    <span className="text-xs font-normal text-muted">
-                      {" "}
-                      / {item.unit ?? "unit"}
+                <div className="flex items-end justify-between gap-2">
+                  <div className="min-w-0">
+                    <span className="text-sm font-medium">
+                      {perUnit(item.price, currency)}
+                      <span className="text-xs font-normal text-muted">
+                        {" "}
+                        / {item.unit ?? "unit"}
+                      </span>
                     </span>
-                  </span>
+                    {/* What was actually paid last time, so the derived
+                        per-unit price is never the only figure on screen —
+                        and, when several purchases are averaged, that it is
+                        an average rather than a receipt. Skipped when it
+                        would only repeat the line above: one purchase of one
+                        unit says nothing the price hasn't. */}
+                    {latest?.packagePrice != null &&
+                      latest.packageQty != null &&
+                      (latest.packageQty > 1 || item.purchases.length > 1) && (
+                        <p className="truncate text-xs text-muted">
+                          {money(latest.packagePrice, currency)} per{" "}
+                          {plural(latest.packageQty, item.unit)}
+                          {counted > 1 && ` · avg of ${counted}`}
+                        </p>
+                      )}
+                  </div>
                   <div className="flex items-center gap-1">
+                    {/* Straight to the listing — reordering is the reason this
+                        is on the card rather than only in the form. The reader
+                        has already dropped anything that isn't http(s). */}
+                    {link && (
+                      <a
+                        href={link}
+                        target="_blank"
+                        rel="noreferrer"
+                        aria-label={`Buy ${item.name} at ${domain(link)}`}
+                        title={domain(link)}
+                        className="inline-flex size-8 items-center justify-center rounded-lg text-muted hover:text-[var(--accent-strong)]"
+                      >
+                        <LuExternalLink className="size-3.5" />
+                      </a>
+                    )}
                     <Button
                       size="sm"
                       variant="ghost"
@@ -207,140 +234,18 @@ export function SuppliesBrowser({
                     </Button>
                   </div>
                 </div>
-                {item.notes && (
-                  <p className="text-xs text-muted">{item.notes}</p>
+                {item.description && (
+                  <p className="line-clamp-2 text-xs text-muted">
+                    {item.description}
+                  </p>
                 )}
               </Card.Content>
             </Card>
-          ))}
+            );
+          })}
         </div>
       )}
     </div>
   );
 }
 
-/**
- * The add/edit form, inside the modal.
- *
- * Name and Price are required, validated inline with HeroUI `TextField` +
- * `FieldError` (no native `required`, so no browser tooltip). The error shows
- * once a required field has been touched and left empty, and Save is disabled
- * until both are filled.
- */
-function SupplyForm({
-  current,
-  currency,
-  error,
-  formAction,
-  pending,
-  onCancel,
-}: {
-  current: SupplyItem | null;
-  currency: string;
-  error: string | null;
-  formAction: (payload: FormData) => void;
-  pending: boolean;
-  onCancel: () => void;
-}) {
-  const [name, setName] = useState(current?.name ?? "");
-  const [price, setPrice] = useState(
-    current?.price != null ? String(current.price) : "",
-  );
-  const [touched, setTouched] = useState<Record<string, boolean>>({});
-  const touch = (field: string) =>
-    setTouched((prev) => ({ ...prev, [field]: true }));
-
-  const nameEmpty = name.trim() === "";
-  const priceEmpty = price.trim() === "";
-  const canSave = !nameEmpty && !priceEmpty;
-
-  return (
-    <form action={formAction}>
-      <Modal.Header>
-        <Modal.Heading>
-          {current ? `Edit ${current.name}` : "Add supply"}
-        </Modal.Heading>
-      </Modal.Header>
-
-      <Modal.Body className="flex flex-col gap-4">
-        {error && (
-          <Alert status="danger">
-            <Alert.Indicator />
-            <Alert.Content>
-              <Alert.Description>{error}</Alert.Description>
-            </Alert.Content>
-          </Alert>
-        )}
-
-        <input type="hidden" name="id" value={current?.id ?? ""} />
-
-        <div className="grid gap-4 sm:grid-cols-2">
-          <TextField
-            name="name"
-            value={name}
-            onChange={setName}
-            onBlur={() => touch("name")}
-            isInvalid={Boolean(touched.name && nameEmpty)}
-          >
-            <Label>
-              Name
-              <Req />
-            </Label>
-            <Input placeholder="Gold jump ring 4mm" />
-            <FieldError>A name is required.</FieldError>
-          </TextField>
-
-          <TextField name="category" defaultValue={current?.category ?? ""}>
-            <Label>Category</Label>
-            <Input placeholder="findings" />
-          </TextField>
-
-          <TextField name="unit" defaultValue={current?.unit ?? "piece"}>
-            <Label>Unit</Label>
-            <Input list="supply-units" placeholder="piece" />
-            <datalist id="supply-units">
-              {UNITS.map((u) => (
-                <option key={u} value={u} />
-              ))}
-            </datalist>
-          </TextField>
-
-          <TextField
-            name="price"
-            value={price}
-            onChange={setPrice}
-            onBlur={() => touch("price")}
-            isInvalid={Boolean(touched.price && priceEmpty)}
-          >
-            <Label>
-              Price per unit ({currency})
-              <Req />
-            </Label>
-            <Input
-              type="number"
-              step="0.01"
-              min="0"
-              inputMode="decimal"
-              placeholder="0.05"
-            />
-            <FieldError>A price is required.</FieldError>
-          </TextField>
-
-          <TextField name="notes" defaultValue={current?.notes ?? ""}>
-            <Label>Notes</Label>
-            <Input />
-          </TextField>
-        </div>
-      </Modal.Body>
-
-      <Modal.Footer className="flex-col-reverse sm:flex-row sm:justify-end">
-        <Button type="button" variant="tertiary" onPress={onCancel}>
-          Cancel
-        </Button>
-        <Button type="submit" isPending={pending} isDisabled={!canSave}>
-          Save
-        </Button>
-      </Modal.Footer>
-    </form>
-  );
-}

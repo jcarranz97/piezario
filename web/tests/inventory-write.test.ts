@@ -1,4 +1,11 @@
-import { copyFileSync, mkdtempSync, readFileSync } from "node:fs";
+import {
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  writeFileSync,
+} from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
@@ -7,6 +14,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { loadConfig } from "../lib/config";
 import {
   deleteFilament,
+  deleteSupply,
   InventoryError,
   saveCost,
   saveFilament,
@@ -87,19 +95,199 @@ describe("saveFilament", () => {
   });
 });
 
+/** The one-purchase shape most of these tests only need in passing. */
+const bought = (package_price: number, package_qty = 1) => [
+  { package_price, package_qty },
+];
+
 describe("saveSupply", () => {
   it("adds a supply, defaulting the unit to 'piece'", async () => {
-    const id = await saveSupply({ id: "chain", name: "Chain 10cm", price: 0.4 });
+    const id = await saveSupply({
+      id: "chain",
+      name: "Chain 10cm",
+      purchases: bought(0.4),
+    });
     expect(id).toBe("chain");
     const chain = loadConfig().supplies.find((s) => s.id === "chain")!;
     expect(chain.unit).toBe("piece");
     expect(chain.price).toBe(0.4);
   });
 
-  it("rejects a supply with no price", async () => {
+  it("rejects a supply with nothing usable as a price", async () => {
     await expect(
       saveSupply({ id: "glue", name: "Glue" }),
     ).rejects.toBeInstanceOf(InventoryError);
+    await expect(
+      saveSupply({ id: "glue", name: "Glue", purchases: [] }),
+    ).rejects.toBeInstanceOf(InventoryError);
+    // A row with a count but no price is a half-filled form, not a purchase.
+    await expect(
+      saveSupply({ id: "glue", name: "Glue", purchases: [{ package_qty: 5 }] }),
+    ).rejects.toBeInstanceOf(InventoryError);
+  });
+
+  it("rejects a history where nothing is ticked", async () => {
+    await expect(
+      saveSupply({
+        id: "glue",
+        name: "Glue",
+        purchases: [
+          { package_price: 5, package_qty: 10, use_for_price: false },
+        ],
+      }),
+    ).rejects.toThrow(/count toward the price/);
+  });
+
+  it("writes the history and prices it by weighted average", async () => {
+    await saveSupply({
+      id: "washer",
+      name: "Washer",
+      purchases: [
+        { date: "2026-07-01", package_price: 5, package_qty: 10 },
+        {
+          date: "2026-08-01",
+          url: "https://shop.example.com/w",
+          package_price: 20,
+          package_qty: 100,
+        },
+      ],
+    });
+    const yaml = readConfig();
+    expect(yaml).toContain("purchases:");
+    expect(yaml).toContain("package_qty: 100");
+
+    const washer = loadConfig().supplies.find((s) => s.id === "washer")!;
+    expect(washer.purchases).toHaveLength(2);
+    // $25 over 110 units, not the 35c a plain mean of the rates would give.
+    expect(washer.price).toBeCloseTo(25 / 110, 10);
+  });
+
+  it("only writes use_for_price when it is false", async () => {
+    await saveSupply({
+      id: "washer",
+      name: "Washer",
+      purchases: [
+        { package_price: 5, package_qty: 10 },
+        { package_price: 99, package_qty: 1, use_for_price: false },
+      ],
+    });
+    const yaml = readConfig();
+    // The default is to count, so a `true` on every row would be noise.
+    expect(yaml).toContain("use_for_price: false");
+    expect(yaml).not.toContain("use_for_price: true");
+    expect(loadConfig().supplies.find((s) => s.id === "washer")!.price).toBe(0.5);
+  });
+
+  it("migrates a legacy flat supply to purchases on save", async () => {
+    // jump-ring is `package_price: 5` / `package_qty: 100` / `url:` in the
+    // fixture. Read it, save it back untouched, and the old keys should go.
+    const before = loadConfig().supplies.find((s) => s.id === "jump-ring")!;
+    await saveSupply({
+      id: before.id,
+      name: before.name,
+      unit: before.unit ?? undefined,
+      purchases: before.purchases.map((p) => ({
+        date: p.date ?? undefined,
+        url: p.url ?? undefined,
+        package_price: p.packagePrice,
+        package_qty: p.packageQty,
+        use_for_price: p.useForPrice,
+      })),
+    });
+    const after = loadConfig().supplies.find((s) => s.id === "jump-ring")!;
+    expect(after.price).toBe(0.05);
+    expect(after.purchases).toHaveLength(1);
+    // The row is rebuilt from scratch, so the flat keys are simply not written.
+    const row = readConfig().split("- id: jump-ring")[1].split("- id:")[0];
+    expect(row).toContain("purchases:");
+    expect(row).not.toMatch(/^\s{4}package_price:/m);
+  });
+
+  it("round-trips a purchase's date, link and note", async () => {
+    await saveSupply({
+      id: "chain",
+      name: "Chain 10cm",
+      purchases: [
+        {
+          date: "2026-08-08",
+          url: "https://www.amazon.com/dp/ABC123",
+          notes: "20% coupon applied.",
+          package_price: 4,
+          package_qty: 10,
+        },
+      ],
+    });
+    const chain = loadConfig().supplies.find((s) => s.id === "chain")!;
+    expect(chain.purchases[0]).toMatchObject({
+      date: "2026-08-08",
+      url: "https://www.amazon.com/dp/ABC123",
+      notes: "20% coupon applied.",
+    });
+  });
+
+  it("writes the description, retiring the older `notes:` key", async () => {
+    // keyring carries `notes:` in the fixture; saving migrates it.
+    await saveSupply({
+      id: "keyring",
+      name: "Key ring 25mm",
+      purchases: bought(0.1),
+      description: "Split rings, not solid ones.",
+    });
+    expect(
+      loadConfig().supplies.find((s) => s.id === "keyring")!.description,
+    ).toBe("Split rings, not solid ones.");
+
+    const row = readConfig().split("- id: keyring")[1].split("- id:")[0];
+    expect(row).toContain("description:");
+    // The supply's own `notes:` is gone — the word now belongs to purchases.
+    expect(row).not.toMatch(/^\s{4}notes:/m);
+  });
+
+  it("keeps the photo filename, and the file's comments", async () => {
+    await saveSupply({
+      id: "keyring",
+      name: "Key ring 25mm",
+      purchases: bought(0.1),
+      image: "keyring.png",
+    });
+    expect(loadConfig().supplies.find((s) => s.id === "keyring")!.image).toBe(
+      "keyring.png",
+    );
+    expect(readConfig()).toContain("# The landed-cost knobs");
+  });
+
+  it("clears the photo when the image is blank", async () => {
+    await saveSupply({
+      id: "keyring",
+      name: "Key ring 25mm",
+      purchases: bought(0.1),
+      image: "",
+    });
+    expect(loadConfig().supplies.find((s) => s.id === "keyring")!.image).toBeNull();
+  });
+});
+
+describe("deleteSupply", () => {
+  it("removes the supply and takes its photo with it", async () => {
+    // The writer resolves the images folder beside catalog.yaml, which here is
+    // the throwaway copy — so this never touches the fixture's own image.
+    const images = path.join(path.dirname(tempConfig), "assets", "supplies");
+    mkdirSync(images, { recursive: true });
+    const photo = path.join(images, "keyring.png");
+    writeFileSync(photo, "not really a png, but a file");
+
+    await deleteSupply("keyring");
+
+    expect(loadConfig().supplies.map((s) => s.id)).toEqual([
+      "jump-ring",
+      "washer",
+    ]);
+    expect(existsSync(photo)).toBe(false);
+  });
+
+  it("is a no-op for an unknown id", async () => {
+    await deleteSupply("not-there");
+    expect(loadConfig().supplies).toHaveLength(3);
   });
 });
 

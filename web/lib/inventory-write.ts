@@ -3,6 +3,7 @@ import fs from "node:fs/promises";
 import { Document, parseDocument } from "yaml";
 
 import { configPath } from "./config";
+import { deleteSupplyImage } from "./supply-image";
 
 /**
  * The inventory writer — the only code that mutates `catalog.yaml`.
@@ -50,20 +51,45 @@ function cleanColors(
   return out;
 }
 
-/** A supply as it is written to yaml. */
+/** One purchase, in the file's spelling. */
+export interface PurchaseInput {
+  date?: string;
+  url?: string;
+  /** About this purchase alone — a coupon, postage, a short delivery. */
+  notes?: string;
+  package_price?: number | null;
+  package_qty?: number | null;
+  use_for_price?: boolean;
+}
+
+/**
+ * A supply as it is written to yaml.
+ *
+ * The price is not a field: it comes from `purchases`, at least one of which
+ * must count toward it. See `saveSupply`.
+ */
 export interface SupplyInput {
   id: string;
   name: string;
   unit?: string;
-  price?: number | null;
+  /** Every time it was bought. At least one must be usable as a price. */
+  purchases?: PurchaseInput[];
+  /** Photo filename inside the supply images folder, or "" to clear it. */
+  image?: string;
   category?: string;
-  notes?: string;
+  /** What the supply is. Replaces the older `notes:`, which is still read. */
+  description?: string;
 }
 
 export class InventoryError extends Error {}
 
-/** A yaml-safe id: lower kebab, so it is stable and quotes-free in the file. */
-function normaliseId(raw: string): string {
+/**
+ * A yaml-safe id: lower kebab, so it is stable and quotes-free in the file.
+ *
+ * Exported because a supply's photo is named after its id, and a *new* supply
+ * has no id until this runs — the save action needs the same answer this does.
+ */
+export function normaliseId(raw: string): string {
   const id = raw
     .trim()
     .toLowerCase()
@@ -161,17 +187,63 @@ export async function saveFilament(input: FilamentInput): Promise<string> {
   return id;
 }
 
-/** Add a supply, or replace the one with the same id. */
+/** Drop unusable purchase rows and put each one's keys in a stable order. */
+function cleanPurchases(
+  purchases: PurchaseInput[] | undefined,
+): Record<string, unknown>[] {
+  const out: Record<string, unknown>[] = [];
+  for (const purchase of purchases ?? []) {
+    const price = purchase.package_price ?? null;
+    const qty = purchase.package_qty ?? null;
+    // A purchase with no price is a half-filled row, not a record of anything.
+    if (price === null) {
+      continue;
+    }
+    out.push(
+      prune({
+        date: purchase.date,
+        url: purchase.url,
+        notes: purchase.notes,
+        package_price: price,
+        package_qty: qty !== null && qty > 0 ? qty : 1,
+        // Only written when false — the default is to count, and a `true` on
+        // every row would be noise.
+        use_for_price: purchase.use_for_price === false ? false : undefined,
+      }),
+    );
+  }
+  return out;
+}
+
+/**
+ * Add a supply, or replace the one with the same id.
+ *
+ * A supply's price is its **purchase history**: each time it was bought, at
+ * what price, in what size package, and whether that purchase still counts.
+ * The per-unit price is worked out on read (`unitPrice` in `lib/config.ts`), so
+ * it can never disagree with the purchases it came from.
+ *
+ * The row is rebuilt from scratch each save, which is also the migration: a
+ * supply written with the older flat `price:` / `package_price:` / `url:` keys
+ * is read as one purchase and saved back as one, and those keys go.
+ */
 export async function saveSupply(input: SupplyInput): Promise<string> {
   const id = normaliseId(input.id || input.name);
-  // Name and price are mandatory — the form marks them required, and this is
+  // Name and a price are mandatory — the form marks them required, and this is
   // the server-side backstop.
   if (!input.name?.trim()) {
     throw new InventoryError("A name is required.");
   }
-  if (input.price === null || input.price === undefined) {
-    throw new InventoryError("A price is required.");
+  const purchases = cleanPurchases(input.purchases);
+  if (purchases.length === 0) {
+    throw new InventoryError("At least one purchase is required.");
   }
+  if (!purchases.some((row) => row.use_for_price !== false)) {
+    throw new InventoryError(
+      "At least one purchase has to count toward the price.",
+    );
+  }
+
   const file = configPath();
   const doc = await readDocument(file);
   const rows = currentList(doc, "supplies").filter(
@@ -181,9 +253,11 @@ export async function saveSupply(input: SupplyInput): Promise<string> {
     id,
     name: input.name,
     unit: input.unit?.trim() || "piece",
-    price: input.price,
+    image: input.image,
     category: input.category,
-    notes: input.notes,
+    description: input.description,
+    // Last, so the scalar keys stay together above the list.
+    purchases,
   });
   rows.sort(
     (a, b) =>
@@ -195,28 +269,40 @@ export async function saveSupply(input: SupplyInput): Promise<string> {
   return id;
 }
 
-/** Remove one entry by id from a section. A no-op if it isn't there. */
+/**
+ * Remove one entry by id from a section, returning the row that went — the
+ * caller may own files named after it. A no-op if it isn't there.
+ */
 async function deleteFrom(
   key: "filaments" | "supplies",
   id: string,
-): Promise<void> {
+): Promise<Record<string, unknown> | null> {
   const file = configPath();
   const doc = await readDocument(file);
-  const rows = currentList(doc, key).filter(
-    (row) => String(row.id ?? "").toLowerCase() !== id.toLowerCase(),
-  );
-  doc.set(key, rows.map(prune));
+  const all = currentList(doc, key);
+  const matches = (row: Record<string, unknown>) =>
+    String(row.id ?? "").toLowerCase() === id.toLowerCase();
+  const removed = all.find(matches) ?? null;
+  doc.set(key, all.filter((row) => !matches(row)).map(prune));
   await fs.writeFile(file, String(doc), "utf8");
+  return removed;
 }
 
 /** Remove one filament by id. A no-op if it isn't there. */
-export function deleteFilament(id: string): Promise<void> {
-  return deleteFrom("filaments", id);
+export async function deleteFilament(id: string): Promise<void> {
+  await deleteFrom("filaments", id);
 }
 
-/** Remove one supply by id. A no-op if it isn't there. */
-export function deleteSupply(id: string): Promise<void> {
-  return deleteFrom("supplies", id);
+/**
+ * Remove one supply by id, and its photo with it — the file is committed to the
+ * catalog repo, so leaving it behind means an orphan nothing references.
+ */
+export async function deleteSupply(id: string): Promise<void> {
+  const removed = await deleteFrom("supplies", id);
+  const image = removed?.image;
+  if (typeof image === "string") {
+    await deleteSupplyImage(image);
+  }
 }
 
 /** The editable cost settings, in the file's snake_case spelling. */

@@ -56,3 +56,20 @@ export function iconUrl(
   const url = `/icon-files/${encodePath(relPath)}`;
   return options?.download ? `${url}?download` : url;
 }
+
+/**
+ * Link to a supply's photo. The stored value is a bare filename inside the
+ * supply images folder, but it still goes through `encodePath` — an id is
+ * lower-kebab, yet a file put there by hand need not be.
+ *
+ * Here rather than in `lib/inventory.ts` for the same reason as the two above:
+ * the supplies browser and the model editor's picker are client components.
+ */
+export function supplyImageUrl(filename: string): string {
+  return `/supply-files/${encodePath(filename)}`;
+}
+
+/** Link to a supply's page — its photo, its price, and every purchase of it. */
+export function supplyUrl(id: string): string {
+  return `/supplies/${encodeURIComponent(id)}`;
+}

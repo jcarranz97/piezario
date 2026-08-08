@@ -20,6 +20,15 @@ import {
 
 export type { FilamentColor, FilamentItem, SupplyItem } from "./config";
 
+/**
+ * Absolute path to the supply photos, mirroring `iconsRoot()` and friends —
+ * `assets/supplies` beside `catalog.yaml` unless `supply_images_dir` or
+ * `CATALOG_SUPPLY_IMAGES_DIR` says otherwise.
+ */
+export function suppliesRoot(): string {
+  return loadConfig().supplyImagesDir;
+}
+
 /** Every filament spool, sorted by name for a stable tab order. */
 export function getFilaments(): FilamentItem[] {
   return [...loadConfig().filaments].sort((a, b) =>

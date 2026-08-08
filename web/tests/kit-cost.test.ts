@@ -216,8 +216,10 @@ describe("a model composed of other models", () => {
       name: "Key ring",
       unit: "piece",
       price: 0.1,
+      purchases: [],
+      image: null,
       category: null,
-      notes: null,
+      description: null,
     }) as SupplyItem);
 
     const withOut = estimateModelCost(files, summaries, baseCost(), {
