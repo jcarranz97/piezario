@@ -4,6 +4,7 @@ import path from "node:path";
 import matter from "gray-matter";
 
 import type { ModelSupply } from "./catalog";
+import type { ModelComponent } from "./components";
 import { resolveModelDir } from "./model-path";
 
 /**
@@ -52,6 +53,11 @@ export interface ModelFrontmatter {
   efficiency_factor?: number | "";
   /** Prep/clean/package minutes for this part. */
   labor_minutes?: number | "";
+  /**
+   * Whether those minutes are per finished piece or per plate. Only ever
+   * written as "plate"; "part" is the default and sends empty to clear it.
+   */
+  labor_basis?: string;
   /** Packaging consumables (bag, box…) from the supplies catalog. */
   packaging?: ModelSupply[];
   /** Per-part shipping fee (overrides the global default). */
@@ -62,6 +68,15 @@ export interface ModelFrontmatter {
   packaging_cost?: number | "";
   /** Preferred filament id for the cost card. Sent empty to clear it. */
   cost_filament?: string;
+  /**
+   * Component lines — other models this one contains. An empty array clears the
+   * key, so a model stops being a kit when its last component is removed.
+   */
+  components?: ModelComponent[];
+  /** Finished units one sliced plate produces. Sent empty to clear it. */
+  yield?: number | "";
+  /** Percent off the pre-tax total, for a kit. Sent empty to clear it. */
+  discount_percent?: number | "";
 }
 
 /** Is a frontmatter value "empty" (so the merge should delete its key)? */

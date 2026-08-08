@@ -8,6 +8,7 @@ import { LuArrowLeft, LuPencil } from "react-icons/lu";
 import type { Model } from "@/lib/catalog";
 import type { SupplyItem } from "@/lib/inventory";
 
+import type { ComponentOption } from "./components-input";
 import { ModelEditor } from "./model-editor";
 import { OpenFolderButton } from "./open-folder-button";
 
@@ -24,6 +25,7 @@ export function ModelEditPanel({
   allMaterials,
   allPrinters,
   allSupplies,
+  allModels,
   children,
 }: {
   model: Model;
@@ -31,6 +33,8 @@ export function ModelEditPanel({
   allMaterials: string[];
   allPrinters: string[];
   allSupplies: SupplyItem[];
+  /** Every other model, for the component picker. */
+  allModels: ComponentOption[];
   children: React.ReactNode;
 }) {
   const [editing, setEditing] = useState(false);
@@ -43,6 +47,7 @@ export function ModelEditPanel({
         allMaterials={allMaterials}
         allPrinters={allPrinters}
         allSupplies={allSupplies}
+        allModels={allModels}
         onDone={() => setEditing(false)}
       />
     );

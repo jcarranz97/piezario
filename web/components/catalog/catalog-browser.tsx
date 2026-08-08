@@ -27,7 +27,12 @@ import { CategoryTree, TreeLeaf } from "./category-tree";
 import { ModelCard } from "./model-card";
 
 const ALL = "all";
-const CAPABILITIES: Capability[] = ["printable", "parametric", "editable"];
+const CAPABILITIES: Capability[] = [
+  "printable",
+  "parametric",
+  "editable",
+  "kit",
+];
 
 /**
  * The catalog grid, its filters and the folder sidebar.

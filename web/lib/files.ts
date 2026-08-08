@@ -70,25 +70,33 @@ export function classify(filename: string): FileKind {
 }
 
 /**
- * What you can *do* with a model, derived from the kinds of files present.
- * This is what the grid filters on — "show me everything I can still tweak"
- * is a more useful question than "show me everything with a .py in it".
+ * What you can *do* with a model. Mostly derived from the kinds of files
+ * present — "show me everything I can still tweak" is a more useful question
+ * than "show me everything with a .py in it" — with one exception: a kit is
+ * made of other models, so its folder holds no geometry to derive from and the
+ * frontmatter has to say so.
  */
-export type Capability = "printable" | "parametric" | "editable";
+export type Capability = "printable" | "parametric" | "editable" | "kit";
 
 export const CAPABILITY_LABELS: Record<Capability, string> = {
   printable: "Ready to print",
   parametric: "Script-generated",
   editable: "CAD-editable",
+  kit: "Kit",
 };
 
 export const CAPABILITY_HINTS: Record<Capability, string> = {
   printable: "Has a mesh or slicer file you can send to the printer",
   parametric: "Has a script that regenerates the geometry from parameters",
   editable: "Has a real B-rep solid you can still open and modify in CAD",
+  kit: "Composed of other models in the catalog, and priced from them",
 };
 
-export function capabilitiesFor(kinds: Iterable<FileKind>): Capability[] {
+export function capabilitiesFor(
+  kinds: Iterable<FileKind>,
+  /** Facts no file extension can reveal. */
+  opts: { composite?: boolean } = {},
+): Capability[] {
   const present = new Set(kinds);
   const out: Capability[] = [];
   if (present.has("print") || present.has("mesh")) {
@@ -99,6 +107,9 @@ export function capabilitiesFor(kinds: Iterable<FileKind>): Capability[] {
   }
   if (present.has("cad")) {
     out.push("editable");
+  }
+  if (opts.composite) {
+    out.push("kit");
   }
   return out;
 }

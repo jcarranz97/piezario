@@ -1,6 +1,7 @@
 "use client";
 
 import { Button, Card, Chip, Tooltip } from "@heroui/react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 import {
@@ -14,10 +15,16 @@ import {
 import {
   openFileAction,
   saveCostFilamentAction,
+  saveDiscountAction,
   saveMarkupAction,
 } from "@/actions/model.action";
 import { formatMoney } from "@/lib/cost";
-import type { ModelCostGroup, ModelCostOption } from "@/lib/model-cost";
+import type {
+  ModelCostGroup,
+  ModelCostOption,
+  ResolvedComponent,
+} from "@/lib/model-cost";
+import { modelUrl } from "@/lib/urls";
 
 const FIELD =
   "rounded-lg border border-[var(--card-border)] bg-transparent px-2 py-1 text-sm outline-none focus:border-[var(--accent)]";
@@ -74,6 +81,30 @@ function PartLink({ relPath, label }: { relPath: string; label: string }) {
         <span className="text-[10px] text-[var(--accent-strong)]">{error}</span>
       )}
     </span>
+  );
+}
+
+/** A component's title, linking to its own detail page and cost card. */
+function ComponentLink({
+  slug,
+  label,
+  missing,
+}: {
+  slug: string;
+  label: string;
+  missing: boolean;
+}) {
+  if (missing) {
+    return <span className="truncate">{label}</span>;
+  }
+  return (
+    <Link
+      href={modelUrl(slug)}
+      title={slug}
+      className="truncate hover:text-[var(--accent-strong)]"
+    >
+      {label}
+    </Link>
   );
 }
 
@@ -188,33 +219,50 @@ function Row({
  * model, so the profit line then shows the real margin behind that price.
  */
 function PriceRow({
-  price,
-  landed,
-  taxPercent,
+  group,
   currency,
   pending,
-  onSetPrice,
+  onSetMarkup,
+  onSetDiscount,
 }: {
-  price: number;
-  landed: number;
-  taxPercent: number | null;
+  group: ModelCostGroup;
   currency: string;
   pending: boolean;
-  onSetPrice: (markupPercent: number) => void;
+  onSetMarkup: (markupPercent: number) => void;
+  onSetDiscount: (discountPercent: number) => void;
 }) {
   const [editing, setEditing] = useState(false);
   const [value, setValue] = useState("");
 
+  const { price, landed, taxPercent, componentsCost, componentsProfit } = group;
+  // What this model adds on its own — the only part its markup can act on.
+  const ownLanded = landed - componentsCost;
+  // A kit's components already carry their own margins, so the knob that moves
+  // its price is the discount, not a markup on the nothing it adds itself.
+  const isKit = componentsCost > 0 || componentsProfit > 0;
+  const adjustable = isKit ? landed > 0 : ownLanded > 0;
+
   function commit() {
     setEditing(false);
     const target = Number(value);
-    if (!Number.isFinite(target) || target <= 0 || landed <= 0) {
+    if (!Number.isFinite(target) || target <= 0 || !adjustable) {
       return;
     }
-    // price = landed × (1 + markup) × (1 + tax)  ⇒  solve for markup.
     const taxFactor = 1 + (taxPercent ?? 0) / 100;
-    const markup = (target / (landed * taxFactor) - 1) * 100;
-    onSetPrice(Math.max(0, markup));
+    const total = target / taxFactor; // the pre-tax price we need to hit
+    if (isKit) {
+      // total = (landed + gross profit) × (1 − discount)  ⇒  solve for discount.
+      // Gross profit is what the margins came to *before* the current discount,
+      // so add it back — otherwise each edit would compound on the last one.
+      const preDiscount = landed + (group.profit ?? 0) + group.discount;
+      if (preDiscount <= 0) {
+        return;
+      }
+      onSetDiscount(Math.max(0, (1 - total / preDiscount) * 100));
+    } else {
+      // price = landed × (1 + markup) × (1 + tax)  ⇒  solve for markup.
+      onSetMarkup(Math.max(0, (total / ownLanded - 1) * 100));
+    }
   }
 
   return (
@@ -246,12 +294,18 @@ function PriceRow({
         ) : (
           <button
             type="button"
-            disabled={pending}
+            disabled={pending || !adjustable}
             onClick={() => {
               setValue(price.toFixed(2));
               setEditing(true);
             }}
-            title="Click to set a target price; the markup is adjusted to match"
+            title={
+              !adjustable
+                ? "Nothing to adjust — this has no cost to price from"
+                : isKit
+                  ? "Click to set a target price; the kit discount is adjusted to match"
+                  : "Click to set a target price; the markup is adjusted to match"
+            }
             className="inline-flex items-center gap-1 font-semibold tabular-nums underline decoration-dotted decoration-muted underline-offset-4 hover:decoration-[var(--foreground)] disabled:opacity-60"
           >
             {formatMoney(price, currency)}
@@ -269,19 +323,23 @@ function GroupCost({
   group,
   supplyLines,
   packagingLines,
+  componentLines,
   rates,
   currency,
   pending,
   onSetMarkup,
+  onSetDiscount,
   money,
 }: {
   group: ModelCostGroup;
   supplyLines: ModelCostOption["cost"]["supplyLines"];
   packagingLines: ModelCostOption["cost"]["packagingLines"];
+  componentLines: ResolvedComponent[];
   rates: ModelCostOption["cost"]["rates"];
   currency: string;
   pending: boolean;
   onSetMarkup: (markupPercent: number) => void;
+  onSetDiscount: (discountPercent: number) => void;
   money: (value: number) => string;
 }) {
   // Turn resolved supply/packaging lines into breakdown rows (name · qty · cost).
@@ -354,17 +412,126 @@ function GroupCost({
     </>
   ) : undefined;
 
-  // Labor: the rate up top, then minutes × rate = cost below.
+  // Labor: the rate up top, then minutes × rate = cost below. When the minutes
+  // were spent on the whole plate, show that division too — otherwise the line
+  // reads as a rate error rather than as a plate shared 52 ways.
+  const perPlateLabor = rates.laborBasis === "plate" && rates.yieldUnits > 1;
+  const laborTotal = (rates.laborMinutes / 60) * rates.laborPerHour;
   const laborHint = (
     <>
       <div>Rate: {money(rates.laborPerHour)}/hr</div>
+      <div>
+        {rates.laborMinutes} min per {perPlateLabor ? "plate" : "part"}
+      </div>
       <HintDivider />
       <div>
         {rates.laborMinutes} min × {money(rates.laborPerHour)}/hr ={" "}
-        {money(group.labor)}
+        {money(laborTotal)}
+        {perPlateLabor ? " per plate" : ""}
+      </div>
+      {perPlateLabor && (
+        <div>
+          {money(laborTotal)} ÷ {rates.yieldUnits} per plate ={" "}
+          {money(group.labor)}
+        </div>
+      )}
+    </>
+  );
+
+  // Components: one line each, at cost. Their own margins ride in the profit
+  // line below, which is why this figure is smaller than the sum of the prices
+  // on their own cards.
+  const componentBreakdown: Detail[] = componentLines.map((line) => ({
+    name: (
+      <ComponentLink
+        slug={line.slug}
+        label={line.title}
+        missing={line.issue === "missing"}
+      />
+    ),
+    note: `${line.qty} ×`,
+    amount: money(line.lineCost),
+    chip: line.issue ? (
+      <Chip size="sm" variant="soft" className="shrink-0" title={line.note ?? undefined}>
+        {line.issue === "no-print" ? "no slice" : line.issue}
+      </Chip>
+    ) : line.yieldUnits > 1 ? (
+      <Chip
+        size="sm"
+        variant="soft"
+        className="shrink-0"
+        title={`Its plate makes ${line.yieldUnits}, so one unit is that plate's cost divided by ${line.yieldUnits}.`}
+      >
+        1/{line.yieldUnits} plate
+      </Chip>
+    ) : undefined,
+  }));
+
+  const componentsHint = (
+    <>
+      <div>What the parts cost you, at {componentLines.length} line(s).</div>
+      {componentLines.some((line) => line.plateSeconds !== null) && (
+        <>
+          <HintDivider />
+          {componentLines
+            .filter((line) => line.plateSeconds !== null)
+            .map((line) => (
+              <div key={line.slug}>
+                {line.title}: {line.plateGrams?.toFixed(1) ?? "?"} g ·{" "}
+                {formatDuration(line.plateSeconds!)} each
+              </div>
+            ))}
+        </>
+      )}
+      <HintDivider />
+      <div>
+        Their own profit is in the Profit line, not here — so this is cost, not
+        the sum of their prices.
       </div>
     </>
   );
+
+  // Profit is shown *before* the discount, so the column reads as a running
+  // total: landed + profit − discount = price before tax. `group.profit` is the
+  // net figure, which is what `effectiveMarkupPercent` reports.
+  const grossProfit = group.profit === null ? null : group.profit + group.discount;
+  const ownProfit =
+    grossProfit === null ? null : grossProfit - group.componentsProfit;
+
+  // The kit's own markup and the components' carried margins are different
+  // things added together, so name the blended rate rather than a markup that
+  // only applies to part of it.
+  const blended =
+    group.componentsProfit !== 0 && grossProfit !== null && group.landed > 0
+      ? (grossProfit / group.landed) * 100
+      : null;
+  const profitLabel =
+    blended !== null
+      ? `Profit (${blended.toFixed(1)}% blended)`
+      : `Profit (${group.markupPercent}%)`;
+  const profitHint =
+    group.componentsProfit !== 0 ? (
+      <>
+        <div>
+          This model&apos;s own margin: {money(ownProfit ?? 0)}
+          {group.markupPercent !== null ? ` (${group.markupPercent}%)` : ""}
+        </div>
+        <div>
+          The components&apos; own margins: {money(group.componentsProfit)}
+        </div>
+        <HintDivider />
+        <div>
+          A component keeps the markup you set on it, so a kit is worth the sum
+          of its parts before any kit discount.
+        </div>
+        {group.effectiveMarkupPercent !== null && group.discount > 0 && (
+          <div>
+            After the discount you keep {money(group.profit ?? 0)} —{" "}
+            {group.effectiveMarkupPercent.toFixed(1)}% of cost.
+          </div>
+        )}
+      </>
+    ) : undefined;
 
   return (
     <div className="flex flex-col gap-0.5">
@@ -372,13 +539,32 @@ function GroupCost({
         <p className="text-xs font-medium uppercase tracking-wide text-muted">
           {group.isEstimate ? "Estimate" : group.label}
         </p>
-        {!group.isEstimate && group.fileCount > 0 && (
-          <span className="text-xs text-muted">
-            {group.fileCount} {group.fileCount === 1 ? "file" : "files"}
+        {rates.yieldUnits > 1 ? (
+          // Say so loudly: every figure below is one unit, not one plate.
+          <span
+            className="text-xs text-muted"
+            title={`The plate makes ${rates.yieldUnits} of these, so its filament and machine cost are divided by ${rates.yieldUnits}.`}
+          >
+            per unit · {rates.yieldUnits} per plate
           </span>
+        ) : (
+          !group.isEstimate &&
+          group.fileCount > 0 && (
+            <span className="text-xs text-muted">
+              {group.fileCount} {group.fileCount === 1 ? "file" : "files"}
+            </span>
+          )
         )}
       </div>
 
+      {componentLines.length > 0 && (
+        <Row
+          label="Components"
+          value={money(group.componentsCost)}
+          hint={componentsHint}
+          breakdown={componentBreakdown}
+        />
+      )}
       {group.rawMaterials > 0 && (
         <Row
           label="Filament"
@@ -430,10 +616,14 @@ function GroupCost({
       )}
 
       <Row label="Landed cost" value={money(group.landed)} strong />
-      {group.profit !== null && (
+      {grossProfit !== null && (
+        <Row label={profitLabel} value={money(grossProfit)} hint={profitHint} />
+      )}
+      {group.discount > 0 && (
         <Row
-          label={`Profit (${group.markupPercent}%)`}
-          value={money(group.profit)}
+          label={`Kit discount (${group.discountPercent}%)`}
+          value={`−${money(group.discount)}`}
+          hint="Off the pre-tax total. It comes out of the margin, never out of the cost — which is why a discount deeper than the margin shows a negative profit."
         />
       )}
       {group.tax !== null && (
@@ -446,12 +636,11 @@ function GroupCost({
       )}
       {(group.tax !== null || group.profit !== null) && (
         <PriceRow
-          price={group.price}
-          landed={group.landed}
-          taxPercent={group.taxPercent}
+          group={group}
           currency={currency}
           pending={pending}
-          onSetPrice={onSetMarkup}
+          onSetMarkup={onSetMarkup}
+          onSetDiscount={onSetDiscount}
         />
       )}
     </div>
@@ -498,6 +687,20 @@ export function ModelCostCard({
     setError(null);
     startTransition(async () => {
       const result = await saveMarkupAction(slug, markupPercent);
+      if (result.error) {
+        setError(result.error);
+      } else {
+        router.refresh();
+      }
+    });
+  }
+
+  // The kit counterpart: a model made of other models has no cost of its own to
+  // mark up, so a target price moves the discount instead.
+  function setDiscount(discountPercent: number) {
+    setError(null);
+    startTransition(async () => {
+      const result = await saveDiscountAction(slug, discountPercent);
       if (result.error) {
         setError(result.error);
       } else {
@@ -571,10 +774,12 @@ export function ModelCostCard({
             group={group}
             supplyLines={cost.supplyLines}
             packagingLines={cost.packagingLines}
+            componentLines={cost.componentLines}
             rates={cost.rates}
             currency={cost.currency}
             pending={pending}
             onSetMarkup={setMarkup}
+            onSetDiscount={setDiscount}
             money={money}
           />
         ))}

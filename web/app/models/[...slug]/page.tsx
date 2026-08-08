@@ -1,6 +1,7 @@
 import { Card, Chip } from "@heroui/react";
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
+import { cache } from "react";
 import { LuExternalLink } from "react-icons/lu";
 
 import { LicenseBadge } from "@/components/common/license-badge";
@@ -9,13 +10,15 @@ import { FileTable } from "@/components/model/file-table";
 import { ModelCostCard } from "@/components/model/model-cost-card";
 import { ModelEditPanel } from "@/components/model/model-edit-panel";
 import { Readme } from "@/components/model/readme";
-import { getModel, getModels, modelsRoot } from "@/lib/catalog";
+import { getModels, modelsRoot } from "@/lib/catalog";
 import { CustomizeError, type CustomizeSchema, customizeSchema } from "@/lib/customize";
 import { failureRiskFactor, loadConfig } from "@/lib/config";
 import { CAPABILITY_HINTS, CAPABILITY_LABELS } from "@/lib/files";
-import { getFilaments, getSupplies, resolveSupply } from "@/lib/inventory";
+import { getSupplies, resolveSupply } from "@/lib/inventory";
+import { resolveComponents } from "@/lib/kit-cost";
 import {
   type ModelCostOption,
+  candidateFilaments,
   estimateModelCost,
   resolveSupplies,
 } from "@/lib/model-cost";
@@ -24,10 +27,25 @@ import { fileUrl } from "@/lib/urls";
 
 export const dynamic = "force-dynamic";
 
+/**
+ * One tree walk per request, shared by `generateMetadata` and the page.
+ *
+ * `getModel()` is `getModels().find()`, so the naive spelling walks the tree
+ * three times before this page renders anything — and a kit needs the whole
+ * index anyway, to resolve its components without walking once per part.
+ * React's `cache` is per-request, so `lib/catalog.ts` stays uncached and
+ * editing a README still shows up on the next refresh.
+ */
+const loadIndex = cache(async () => {
+  const models = await getModels();
+  return { models, index: new Map(models.map((m) => [m.slug, m])) };
+});
+
 /** `slug` arrives as decoded segments; rejoin to match Model.slug. */
 async function resolveModel(params: Promise<{ slug: string[] }>) {
   const { slug } = await params;
-  return getModel(slug.join("/"));
+  const { index } = await loadIndex();
+  return index.get(slug.join("/")) ?? null;
 }
 
 export async function generateMetadata({
@@ -130,6 +148,13 @@ export default async function ModelPage({
   // Only the detail page pays for opening the 3MFs; the grid stays cheap.
   const threeMf = await analyseThreeMf(model.files, modelsRoot(), efficiency);
 
+  // What this model's `components:` lines cost and earn. Each component is
+  // priced at its *own* preferred filament, never this model's, so the rollup
+  // does not vary across the dropdown below — resolve it once, outside the loop.
+  const { models, index } = await loadIndex();
+  const config = loadConfig();
+  const components = await resolveComponents(model, index, config);
+
   // The whole-model landed cost. The dropdown offers every filament whose
   // material is one of the model's — a PLA-only part lists the PLA spools, a
   // PLA/PETG part lists both. The 3MFs are read once above; each option reprices
@@ -137,27 +162,25 @@ export default async function ModelPage({
   const supplyLines = resolveSupplies(model.supplies, resolveSupply);
   const packagingLines = resolveSupplies(model.packaging, resolveSupply);
   const buildCost = (rate: number | null) =>
-    estimateModelCost(
-      model.files,
-      threeMf.files,
-      costConfig,
+    estimateModelCost(model.files, threeMf.files, costConfig, {
       supplyLines,
       packagingLines,
-      rate,
+      overridePerKg: rate,
       efficiency,
       laborMinutes,
+      laborBasis: model.laborBasis,
       shipping,
       markupPercent,
-      model.failureRisk ?? "medium",
-    );
+      riskLevel: model.failureRisk ?? "medium",
+      components,
+      yieldUnits: model.yieldUnits,
+      discountPercent: model.discountPercent,
+    });
 
-  const materialSet = new Set(model.materials.map((m) => m.toLowerCase()));
-  const candidateFilaments = getFilaments().filter(
-    (f) => f.material && materialSet.has(f.material.toLowerCase()),
-  );
+  const candidates = candidateFilaments(model.materials, config.filaments);
 
   const costOptions: ModelCostOption[] = [];
-  for (const filament of candidateFilaments) {
+  for (const filament of candidates) {
     const cost = buildCost(filament.pricePerKg);
     if (cost) {
       costOptions.push({
@@ -195,7 +218,6 @@ export default async function ModelPage({
   }
 
   // Autocomplete suggestions: everything already used elsewhere in the catalog.
-  const models = await getModels();
   const allTags = [...new Set(models.flatMap((item) => item.tags))].sort();
   const allMaterials = [
     ...new Set(models.flatMap((item) => item.materials)),
@@ -204,6 +226,15 @@ export default async function ModelPage({
     ...new Set(models.flatMap((item) => item.printers)),
   ].sort();
   const allSupplies = getSupplies();
+  // Just enough of each model to fill the component picker. Passing `Model[]`
+  // would ship every model's file list and README body to the browser.
+  const allModels = models
+    .filter((item) => item.slug !== model.slug)
+    .map((item) => ({
+      slug: item.slug,
+      title: item.title,
+      category: item.categories.join(" / "),
+    }));
 
   return (
     <ModelEditPanel
@@ -212,6 +243,7 @@ export default async function ModelPage({
       allMaterials={allMaterials}
       allPrinters={allPrinters}
       allSupplies={allSupplies}
+      allModels={allModels}
     >
       <div className="flex flex-col gap-8">
         <div>
