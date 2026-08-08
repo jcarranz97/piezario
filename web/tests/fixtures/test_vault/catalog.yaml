@@ -5,6 +5,7 @@
 models_dir: models
 fonts_dir: fonts
 icons_dir: icons
+supply_images_dir: assets/supplies
 
 # A folder with subfolders is a category; these are never content.
 exclude:
@@ -51,10 +52,47 @@ filaments:
     material: PETG
     price_per_kg: 25
 
-# Consumables that aren't printed.
+# Consumables that aren't printed. Three shapes on purpose: the two legacy flat
+# ones (a bare `price:`, and `package_price` + `package_qty`), which must still
+# read as a single purchase, and a real `purchases:` history.
 supplies:
   - id: keyring
     name: Key ring 25mm
     unit: piece
     price: 0.1
     category: Hardware
+    image: keyring.png
+    url: https://www.amazon.com/dp/EXAMPLE
+    # The older spelling of `description:`, still read.
+    notes: Split rings, not solid ones.
+  - id: jump-ring
+    name: Jump ring 4mm
+    unit: piece
+    package_price: 5
+    package_qty: 100
+    category: Hardware
+    # Not a link the UI may click: the reader drops any non-http(s) scheme
+    # rather than render it as an href.
+    url: "javascript:alert(1)"
+  - id: washer
+    name: Washer 6mm
+    unit: piece
+    category: Hardware
+    description: Zinc-plated. The M6 ones, not M5.
+    # $5 for 10 and $20 for 100 is $25 for 110 — 22.7c each. A plain average of
+    # the two rates (50c and 20c) would say 35c, which is the bug this shape
+    # exists to avoid.
+    purchases:
+      - date: "2026-07-01"
+        url: https://shop.example.com/washers
+        package_price: 5
+        package_qty: 10
+      - date: 2026-08-01
+        package_price: 20
+        package_qty: 100
+        notes: Free postage over $15.
+      # A one-off at a silly price, kept for the record but out of the average.
+      - date: 2026-06-01
+        package_price: 100
+        package_qty: 1
+        use_for_price: false

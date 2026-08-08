@@ -123,17 +123,70 @@ export interface FilamentItem {
  * that isn't printed. Lives under `supplies:` in `catalog.yaml`. A model lists
  * how many of each it needs; the unit and unit price come from here.
  */
+/**
+ * One time you bought a supply — a bag, from a shop, at a price.
+ *
+ * The same thing is rarely bought twice at the same price: this week it is a
+ * bag of 100 from Amazon, next month a bag of 20 from somewhere else. Keeping
+ * each purchase rather than overwriting one number is what makes the per-unit
+ * price defensible, and what lets you see the price drifting.
+ */
+export interface SupplyPurchase {
+  /** When you bought it, `YYYY-MM-DD`. Optional; undated sorts oldest. */
+  date: string | null;
+  /** The listing you bought it from. `http(s)` only; see `itemUrl`. */
+  url: string | null;
+  /**
+   * Anything about *this* purchase worth remembering — a coupon, a postage
+   * charge, a bag that arrived short. What is true of the supply in general
+   * belongs on its `description` instead.
+   */
+  notes: string | null;
+  /** What the package cost. */
+  packagePrice: number | null;
+  /** How many units the package holds. */
+  packageQty: number | null;
+  /**
+   * Whether this purchase feeds the price. Defaults to true.
+   *
+   * Untick the old ones and the price becomes what it costs you to restock
+   * *today* — which is the number to price your work against, since that is
+   * what you will actually pay to replace what you sold.
+   */
+  useForPrice: boolean;
+}
+
 export interface SupplyItem {
   /** Stable key a model references. Required; entries without one are dropped. */
   id: string;
   name: string;
   /** Unit the price is per: piece, gram, ml, cm… A free-form label. */
   unit: string | null;
-  /** Price per one unit. */
+  /**
+   * The effective price of **one** unit — what every cost calculation reads.
+   *
+   * Derived from `purchases`, never stored: the **quantity-weighted** average
+   * over the ones marked `use_for_price`. Weighted, not a plain mean of their
+   * per-unit prices — 10 units at $0.50 and 100 at $0.20 is $0.227 each, not
+   * $0.35; averaging the rates would let a small purchase count as much as a
+   * large one.
+   */
   price: number | null;
+  /** Every time this was bought, newest first. */
+  purchases: SupplyPurchase[];
+  /**
+   * Photo filename inside `supplyImagesDir` — a bare name, never a path. A
+   * name like `bolsa-de-celofan-5x3` says little; the picture says all of it.
+   */
+  image: string | null;
   /** Optional grouping label for the Supplies tab. */
   category: string | null;
-  notes: string | null;
+  /**
+   * What this supply is — the thing that stays true between purchases ("the
+   * packs hold 24 pairs, but they are sold as 48"). Still read from the older
+   * `notes:` key. A note about one *purchase* goes on that purchase.
+   */
+  description: string | null;
 }
 
 export interface CatalogConfig {
@@ -143,6 +196,12 @@ export interface CatalogConfig {
   fontsDir: string;
   /** Absolute path to the icons folder. */
   iconsDir: string;
+  /**
+   * Absolute path to the supply photos. Unlike the three above this holds no
+   * catalog content of its own — it is one small picture per `supplies:` entry,
+   * named after that entry's id.
+   */
+  supplyImagesDir: string;
   /** Folder patterns that are never models, categories, or font folders. */
   exclude: string[];
   /**
@@ -222,6 +281,28 @@ function itemNumber(value: unknown): number | null {
 }
 
 /**
+ * A yaml scalar to a link the UI may safely put in an `href`, or null.
+ *
+ * Only `http(s)` survives. Anything else — `javascript:` above all — is
+ * dropped rather than rendered, because this value is typed into a form and
+ * ends up as an anchor someone clicks.
+ */
+function itemUrl(value: unknown): string | null {
+  const raw = itemString(value);
+  if (!raw) {
+    return null;
+  }
+  try {
+    const parsed = new URL(raw);
+    return parsed.protocol === "http:" || parsed.protocol === "https:"
+      ? raw
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Parse a filament's `colors:` list. Each entry is `{ name, hex }`, but a bare
  * string ("Black") or a lone hex is accepted too. A legacy top-level `color:`
  * (from the one-entry-per-colour era) becomes a single unnamed colour, so old
@@ -289,6 +370,114 @@ function parseFilaments(value: unknown): FilamentItem[] {
   return out;
 }
 
+/**
+ * A `YYYY-MM-DD` date, or null.
+ *
+ * js-yaml's default schema resolves an unquoted `2026-08-08` to a `Date`, so
+ * the same field arrives as either a Date or a string depending on whether the
+ * author quoted it. Both normalise to the string form here.
+ */
+function itemDate(value: unknown): string | null {
+  if (value instanceof Date) {
+    return Number.isNaN(value.getTime())
+      ? null
+      : value.toISOString().slice(0, 10);
+  }
+  const raw = itemString(value);
+  return raw && /^\d{4}-\d{2}-\d{2}/.test(raw) ? raw.slice(0, 10) : null;
+}
+
+/** A package count only means something above zero; a typo becomes null. */
+function positive(value: unknown): number | null {
+  const n = itemNumber(value);
+  return n !== null && n > 0 ? n : null;
+}
+
+/**
+ * Parse a supply's `purchases:` list, newest first.
+ *
+ * A supply with none is read from the older flat keys instead — `price:`, or
+ * `package_price:` + `package_qty:`, with `url:` — as a single undated
+ * purchase. That is the whole migration: entries written before purchases
+ * existed keep pricing exactly as they did.
+ */
+function parsePurchases(row: Record<string, unknown>): SupplyPurchase[] {
+  const out: SupplyPurchase[] = [];
+  const rows = Array.isArray(row.purchases) ? row.purchases : [];
+  for (const raw of rows) {
+    if (!raw || typeof raw !== "object") {
+      continue;
+    }
+    const entry = raw as Record<string, unknown>;
+    const packageQty = positive(entry.package_qty);
+    out.push({
+      date: itemDate(entry.date),
+      url: itemUrl(entry.url),
+      notes: itemString(entry.notes),
+      // A bare `price:` on a purchase is a package of one, same as it always
+      // meant on the supply itself.
+      packagePrice: itemNumber(entry.package_price ?? entry.price),
+      packageQty: entry.package_qty === undefined ? 1 : packageQty,
+      // Absent means yes: a purchase you wrote down is one you made.
+      useForPrice: entry.use_for_price !== false,
+    });
+  }
+
+  if (out.length === 0) {
+    const packagePrice = itemNumber(row.package_price ?? row.price);
+    if (packagePrice !== null) {
+      out.push({
+        date: null,
+        url: itemUrl(row.url),
+        notes: null,
+        packagePrice,
+        packageQty: row.package_qty === undefined ? 1 : positive(row.package_qty),
+        useForPrice: true,
+      });
+    }
+  }
+
+  // Newest first; undated entries fall to the bottom, keeping file order.
+  return out
+    .map((purchase, index) => ({ purchase, index }))
+    .sort((a, b) => {
+      const left = a.purchase.date;
+      const right = b.purchase.date;
+      if (left && right) {
+        return right.localeCompare(left) || a.index - b.index;
+      }
+      if (left) {
+        return -1;
+      }
+      if (right) {
+        return 1;
+      }
+      return a.index - b.index;
+    })
+    .map(({ purchase }) => purchase);
+}
+
+/**
+ * The price of one unit: everything spent on the counted purchases, divided by
+ * everything they brought in. See `SupplyItem.price` for why it is weighted.
+ */
+export function unitPrice(purchases: SupplyPurchase[]): number | null {
+  let spent = 0;
+  let units = 0;
+  for (const purchase of purchases) {
+    if (
+      purchase.useForPrice &&
+      purchase.packagePrice !== null &&
+      purchase.packageQty !== null &&
+      purchase.packageQty > 0
+    ) {
+      spent += purchase.packagePrice;
+      units += purchase.packageQty;
+    }
+  }
+  return units > 0 ? spent / units : null;
+}
+
 /** Parse the `supplies:` list, same discipline as `parseFilaments`. */
 function parseSupplies(value: unknown): SupplyItem[] {
   if (!Array.isArray(value)) {
@@ -304,13 +493,17 @@ function parseSupplies(value: unknown): SupplyItem[] {
     if (!id) {
       continue;
     }
+    const purchases = parsePurchases(row);
     out.push({
       id,
       name: itemString(row.name) ?? id,
       unit: itemString(row.unit) ?? "piece",
-      price: itemNumber(row.price),
+      price: unitPrice(purchases),
+      purchases,
+      image: itemString(row.image),
       category: itemString(row.category),
-      notes: itemString(row.notes),
+      // `notes:` was this field's name before purchases got notes of their own.
+      description: itemString(row.description ?? row.notes),
     });
   }
   return out;
@@ -383,6 +576,11 @@ export function loadConfig(): CatalogConfig {
     modelsDir: resolveDir("CATALOG_MODELS_DIR", "models_dir", "models"),
     fontsDir: resolveDir("CATALOG_FONTS_DIR", "fonts_dir", "fonts"),
     iconsDir: resolveDir("CATALOG_ICONS_DIR", "icons_dir", "icons"),
+    supplyImagesDir: resolveDir(
+      "CATALOG_SUPPLY_IMAGES_DIR",
+      "supply_images_dir",
+      "assets/supplies",
+    ),
     exclude: asStringList(data.exclude) ?? DEFAULT_EXCLUDE,
     outputDirs: asStringList(data.output_dirs) ?? DEFAULT_OUTPUT_DIRS,
     cost: {

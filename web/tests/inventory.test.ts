@@ -12,7 +12,11 @@ describe("getFilaments", () => {
 describe("getSupplies", () => {
   it("returns supplies sorted by category then name", () => {
     const supplies = getSupplies();
-    expect(supplies.map((s) => s.id)).toEqual(["keyring"]);
+    expect(supplies.map((s) => s.id)).toEqual([
+      "jump-ring",
+      "keyring",
+      "washer",
+    ]);
   });
 });
 

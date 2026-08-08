@@ -32,8 +32,39 @@ const keyring: SupplyItem = {
   name: "Key ring",
   unit: "piece",
   price: 0.1,
+  purchases: [],
+  image: null,
   category: null,
-  notes: null,
+  description: null,
+};
+
+/**
+ * The same 10c ring, arrived at from two purchases instead of one. `price` is
+ * what the cost code reads, so a supply with a purchase history must be
+ * indistinguishable from a flat-priced one by the time it gets there.
+ */
+const keyringBag: SupplyItem = {
+  ...keyring,
+  // $5/50 and $5/50 again: 10c either way, but reached the long way round.
+  price: 10 / 100,
+  purchases: [
+    {
+      date: "2026-08-01",
+      url: null,
+      notes: null,
+      packagePrice: 5,
+      packageQty: 50,
+      useForPrice: true,
+    },
+    {
+      date: "2026-07-01",
+      url: null,
+      notes: null,
+      packagePrice: 5,
+      packageQty: 50,
+      useForPrice: true,
+    },
+  ],
 };
 
 function slice(grams: number, seconds: number): ThreeMfSlice {
@@ -61,6 +92,12 @@ describe("resolveSupplies", () => {
     const resolved = resolveSupplies([{ item: "ghost", qty: 3 }], () => null);
     expect(resolved[0].supply).toBeNull();
     expect(resolved[0].lineTotal).toBeNull();
+  });
+
+  it("prices a package-bought supply exactly like a per-unit one", () => {
+    const perUnit = resolveSupplies([{ item: "keyring", qty: 2 }], () => keyring);
+    const byBag = resolveSupplies([{ item: "keyring", qty: 2 }], () => keyringBag);
+    expect(byBag[0].lineTotal).toBe(perUnit[0].lineTotal);
   });
 });
 

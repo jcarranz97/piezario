@@ -20,3 +20,4 @@ process.env.CATALOG_CONFIG = TEST_CONFIG;
 delete process.env.CATALOG_MODELS_DIR;
 delete process.env.CATALOG_FONTS_DIR;
 delete process.env.CATALOG_ICONS_DIR;
+delete process.env.CATALOG_SUPPLY_IMAGES_DIR;

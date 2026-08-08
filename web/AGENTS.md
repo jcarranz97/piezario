@@ -237,6 +237,31 @@ Three things are worth knowing before touching this:
   and surface it in the `filaments`/`supplies` browser. Model-side pricing
   reads through `lib/model-cost.ts`.
 
+  Note what `SupplyItem.price` is before touching it: the **derived**
+  price of one unit, and never a stored field. It is `unitPrice()` over
+  the supply's `purchases:` — the **quantity-weighted** average of the
+  ones whose `use_for_price` isn't `false`, i.e. total spent over total
+  units. Weighted is the whole point: a plain mean of the per-unit rates
+  lets a bag of 10 count as much as a bag of 100, which is a real
+  mispricing, not a rounding difference. There is a fixture and a test
+  pinning that (`tests/config.test.ts`, "weights the average by
+  quantity").
+
+  The older flat spellings (`price:`, `package_price:`/`package_qty:`,
+  `url:`) are read as a single undated purchase and rewritten as one on
+  save — the same migrate-on-write rule `write.ts` uses for a model's
+  retired frontmatter keys.
+
+  Every cost calculation reads `price` and nothing else — the single
+  multiplication is in `resolveSupplies` (`lib/model-cost.ts`) — so keep
+  new pricing shapes resolving to it rather than teaching the cost code
+  about them.
+
+  A field that becomes an `href` — `SupplyItem.url`, the buy-it-again link —
+  is validated **at parse time** (`itemUrl`), not at the anchor: anything but
+  `http(s)` is dropped, so a `javascript:` typed into the form can never be
+  rendered as something clickable.
+
 ## Composed Models (Kits)
 
 Any model may carry a `components:` list — other catalog models it contains,
@@ -283,15 +308,27 @@ Constraints worth knowing before you touch this:
   value from `lib/catalog.ts` drags `node:fs` into the browser bundle and
   fails the build.
 
-There are three sanctioned writers, and everything else stays read-only:
+There are four sanctioned writers, and everything else stays read-only:
 `lib/write.ts` (a model's README), `lib/icons-import.ts` (a saved icon),
-and `lib/inventory-write.ts` (`catalog.yaml`'s `filaments:`, `supplies:`
-and `cost:`). Each owns a path guard and its own invariant — for
-`write.ts` the "empty means delete" rule and the promise that unknown keys
-and the markdown body survive; for `inventory-write.ts`, that **every
-comment in `catalog.yaml` survives**. It edits only those nodes via the
-`yaml` Document API, never a full dump — and the `cost:` values are set
-**in place** (`setIn`) so the paragraph above each one stays put.
+`lib/inventory-write.ts` (`catalog.yaml`'s `filaments:`, `supplies:`
+and `cost:`) and `lib/supply-image.ts` (a supply's photo). Each owns a
+path guard and its own invariant — for `write.ts` the "empty means delete"
+rule and the promise that unknown keys and the markdown body survive; for
+`inventory-write.ts`, that **every comment in `catalog.yaml` survives**.
+It edits only those nodes via the `yaml` Document API, never a full dump —
+and the `cost:` values are set **in place** (`setIn`) so the paragraph
+above each one stays put.
+
+`supply-image.ts` writes one file per supply, named after that supply's
+id: the id is already lower-kebab and survives a rename, so a photo stays
+attached to its supply and an orphan is identifiable in a git diff. It
+re-sanitises the id (it cannot see where the caller got it), re-confirms
+the destination inside the root, **sniffs the magic bytes** rather than
+trusting the extension, and caps the size at 2 MB — the form downscales in
+the browser, so this is the backstop, not the mechanism. It also deletes
+the same supply's file under the other extensions, since a PNG replaced by
+a WebP would otherwise stay committed and referenced by nothing. Deleting
+a supply deletes its photo, from `deleteSupply`.
 
 ## HeroUI v3 Notes
 
@@ -324,3 +361,18 @@ curl and browsers collapse a literal `../` first.
 Images and text are served inline; everything else, and any request with
 `?download`, is sent as an attachment. `Cache-Control: no-store`
 throughout, because these files change while you work.
+
+A supply also has a **page** at `/supplies/[id]`, which is a normal route
+rather than a file one: the photo, the derived price, the whole purchase
+history, and which models use it. It is where a supply line in a model's
+cost breakdown links to, so "why does this part cost that?" leads to the
+receipts. Its Edit button links back to `/supplies?edit=<id>`, which the
+browser reads once on mount and then strips from the URL — cheaper than
+lifting the form out of the modal to a second place.
+
+`/font-files`, `/icon-files` and `/supply-files` are the same route over
+the fonts, icons and supply-photo roots. All four share one
+implementation — `serveFileFrom()` in `lib/serve.ts` — so the containment
+check cannot drift between them; a new root is a root argument and eleven
+lines, never a second copy of the check. Their URLs are built by
+`lib/urls.ts`, the one module in `lib/` a client component may import.

@@ -18,13 +18,14 @@ import {
   saveDiscountAction,
   saveMarkupAction,
 } from "@/actions/model.action";
+import { SupplyThumb } from "@/components/supplies/supply-thumb";
 import { formatMoney } from "@/lib/cost";
 import type {
   ModelCostGroup,
   ModelCostOption,
   ResolvedComponent,
 } from "@/lib/model-cost";
-import { modelUrl } from "@/lib/urls";
+import { modelUrl, supplyUrl } from "@/lib/urls";
 
 const FIELD =
   "rounded-lg border border-[var(--card-border)] bg-transparent px-2 py-1 text-sm outline-none focus:border-[var(--accent)]";
@@ -343,11 +344,29 @@ function GroupCost({
   money: (value: number) => string;
 }) {
   // Turn resolved supply/packaging lines into breakdown rows (name · qty · cost).
+  // The photo comes along so a charge is recognisable as the thing it is, and
+  // the name links to the supply, so "why does this line cost that?" is one
+  // click from the purchases it was worked out from. A line whose id resolves
+  // to nothing has nowhere to go, and stays plain text.
   const supplyBreakdown = (
     lines: ModelCostOption["cost"]["supplyLines"],
   ): Detail[] =>
     lines.map((line) => ({
-      name: line.supply?.name ?? line.item,
+      name: (
+        <span className="flex min-w-0 items-center gap-2">
+          <SupplyThumb image={line.supply?.image ?? null} size={20} />
+          {line.supply ? (
+            <Link
+              href={supplyUrl(line.supply.id)}
+              className="truncate hover:underline"
+            >
+              {line.supply.name}
+            </Link>
+          ) : (
+            <span className="truncate">{line.item}</span>
+          )}
+        </span>
+      ),
       note: `${line.qty}${line.supply?.unit ? ` ${line.supply.unit}` : "×"}`,
       amount: line.lineTotal !== null ? money(line.lineTotal) : "—",
       chip: !line.supply ? (

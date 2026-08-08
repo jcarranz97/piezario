@@ -1,9 +1,10 @@
 "use client";
 
-import { Button } from "@heroui/react";
+import { Button, ListBox, Select } from "@heroui/react";
 import { useState } from "react";
 import { LuPlus, LuTrash2 } from "react-icons/lu";
 
+import { SupplyThumb } from "@/components/supplies/supply-thumb";
 import type { ModelSupply } from "@/lib/catalog";
 import type { SupplyItem } from "@/lib/inventory";
 
@@ -16,11 +17,15 @@ const INPUT =
  * The supplies editor: a repeatable list of `{ item, qty }` rows.
  *
  * `TagInput` can't hold a count next to each name, so this is its structured
- * cousin — a supply `<select>` (options are the catalog's supplies) plus a
+ * cousin — a supply picker (the options are the catalog's supplies) plus a
  * quantity, with add/remove. The whole list is serialised into one hidden JSON
  * field the save action parses, mirroring how `TagInput` mirrors into a hidden
  * comma field. The unit shown next to the quantity comes from the chosen
  * supply, so "2" reads as "2 pieces" without the model storing the unit.
+ *
+ * The picker is a HeroUI `Select` rather than a native one so each option can
+ * carry the supply's photo: a list of names like `cadenita-de-color` and
+ * `dopamine-color-keychain` is hard to choose from correctly.
  */
 export function SuppliesInput({
   name,
@@ -84,18 +89,59 @@ export function SuppliesInput({
 
           {rows.map((row, index) => (
             <div key={index} className="flex items-center gap-2">
-              <select
-                aria-label="Supply"
-                value={row.item}
-                onChange={(event) => update(index, { item: event.target.value })}
-                className={`${INPUT} min-w-0 flex-1`}
-              >
-                {catalog.map((supply) => (
-                  <option key={supply.id} value={supply.id}>
-                    {supply.name}
-                  </option>
-                ))}
-              </select>
+              <div className="min-w-0 flex-1">
+                <Select
+                  aria-label="Supply"
+                  value={row.item}
+                  onChange={(value) =>
+                    update(index, { item: value === null ? "" : String(value) })
+                  }
+                >
+                  <Select.Trigger>
+                    <Select.Value>
+                      {() => {
+                        const supply = byId.get(row.item.toLowerCase());
+                        if (!supply) {
+                          return "Choose a supply";
+                        }
+                        return (
+                          <span className="flex min-w-0 items-center gap-2">
+                            <SupplyThumb image={supply.image} size={20} />
+                            <span className="truncate">{supply.name}</span>
+                          </span>
+                        );
+                      }}
+                    </Select.Value>
+                    <Select.Indicator />
+                  </Select.Trigger>
+                  <Select.Popover>
+                    <ListBox>
+                      {catalog.map((supply) => (
+                        <ListBox.Item
+                          key={supply.id}
+                          id={supply.id}
+                          textValue={supply.name}
+                        >
+                          <span className="flex min-w-0 items-center gap-2">
+                            <SupplyThumb image={supply.image} size={28} />
+                            <span className="min-w-0">
+                              <span className="block truncate">
+                                {supply.name}
+                              </span>
+                              {supply.category && (
+                                <span className="block truncate text-xs text-muted">
+                                  {supply.category}
+                                </span>
+                              )}
+                            </span>
+                          </span>
+                          <ListBox.ItemIndicator />
+                        </ListBox.Item>
+                      ))}
+                    </ListBox>
+                  </Select.Popover>
+                </Select>
+              </div>
               <input
                 aria-label="Quantity"
                 type="number"
