@@ -66,7 +66,7 @@ describe("resolveSupplies", () => {
 
 describe("estimateModelCost", () => {
   it("returns null when there are no files and no per-part extras", () => {
-    expect(estimateModelCost([], [], baseCost(), [], [])).toBeNull();
+    expect(estimateModelCost([], [], baseCost())).toBeNull();
   });
 
   it("builds the Estimate group and the full landed→price chain", () => {
@@ -77,18 +77,14 @@ describe("estimateModelCost", () => {
       () => keyring,
     );
 
-    const result = estimateModelCost(
-      files,
-      summaries,
-      baseCost(),
+    const result = estimateModelCost(files, summaries, baseCost(), {
       supplyLines,
-      [], // packaging
-      null, // overridePerKg → use plate/material rate
-      1.0, // efficiency (isolate the base numbers)
-      5, // labor minutes
-      2, // shipping
-      50, // markup %
-    )!;
+      overridePerKg: null, // use the plate/material rate
+      efficiency: 1.0, // isolate the base numbers
+      laborMinutes: 5,
+      shipping: 2,
+      markupPercent: 50,
+    })!;
 
     expect(result).not.toBeNull();
     expect(result.groups).toHaveLength(1);
@@ -128,15 +124,9 @@ describe("estimateModelCost", () => {
       summary("out/batch1/b.gcode.3mf", slice(50, 0)),
     ];
 
-    const result = estimateModelCost(
-      files,
-      summaries,
-      baseCost(),
-      [],
-      [],
-      null,
-      1.0,
-    )!;
+    const result = estimateModelCost(files, summaries, baseCost(), {
+      efficiency: 1.0,
+    })!;
 
     const labels = result.groups.map((g) => g.label);
     expect(labels).toEqual(["Estimate", "batch1"]); // Estimate sorts first
@@ -148,13 +138,7 @@ describe("estimateModelCost", () => {
 
   it("flags supply ids that aren't in the catalog as unresolved", () => {
     const supplyLines = resolveSupplies([{ item: "ghost", qty: 1 }], () => null);
-    const result = estimateModelCost(
-      [],
-      [],
-      baseCost(),
-      supplyLines,
-      [],
-    )!;
+    const result = estimateModelCost([], [], baseCost(), { supplyLines })!;
     expect(result).not.toBeNull();
     expect(result.unresolved).toEqual(["ghost"]);
   });

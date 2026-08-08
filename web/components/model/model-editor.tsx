@@ -9,6 +9,7 @@ import { TagInput } from "@/components/forms/tag-input";
 import type { Model } from "@/lib/catalog";
 import type { SupplyItem } from "@/lib/inventory";
 
+import { type ComponentOption, ComponentsInput } from "./components-input";
 import { MarkdownEditor } from "./markdown-editor";
 import { SuppliesInput } from "./supplies-input";
 
@@ -16,9 +17,18 @@ const STATUSES = ["", "idea", "wip", "printed"];
 
 const initialState: SaveModelState = { error: null };
 
-/** Shared styling for the plain inputs, matching the tag input's border. */
-const FIELD =
-  "w-full rounded-lg border border-[var(--card-border)] bg-transparent px-3 py-2 text-sm outline-none focus:border-[var(--accent)]";
+/**
+ * Shared styling for the plain inputs, matching the tag input's border.
+ *
+ * `FIELD_BASE` carries no width, so a field that shares its row with another
+ * (the labour minutes + basis pair) can size its parts with `flex-1` / `w-32`.
+ * Adding a width utility next to `FIELD`'s `w-full` does not override it —
+ * both are width utilities in the same layer, so which one wins depends on
+ * stylesheet order rather than on the order you wrote them.
+ */
+const FIELD_BASE =
+  "rounded-lg border border-[var(--card-border)] bg-transparent px-3 py-2 text-sm outline-none focus:border-[var(--accent)]";
+const FIELD = `w-full ${FIELD_BASE}`;
 
 function Field({
   label,
@@ -52,6 +62,7 @@ export function ModelEditor({
   allMaterials,
   allPrinters,
   allSupplies,
+  allModels,
   onDone,
 }: {
   model: Model;
@@ -59,6 +70,7 @@ export function ModelEditor({
   allMaterials: string[];
   allPrinters: string[];
   allSupplies: SupplyItem[];
+  allModels: ComponentOption[];
   onDone: () => void;
 }) {
   const router = useRouter();
@@ -158,6 +170,12 @@ export function ModelEditor({
         suggestions={allPrinters}
       />
 
+      <ComponentsInput
+        name="components"
+        defaultComponents={model.components}
+        catalog={allModels}
+      />
+
       <SuppliesInput
         name="supplies"
         defaultSupplies={model.supplies}
@@ -174,16 +192,37 @@ export function ModelEditor({
       />
 
       <div className="grid gap-4 sm:grid-cols-2">
-        <Field label="Labor (minutes)" hint="Prep, clean and package time.">
-          <input
-            name="labor_minutes"
-            type="number"
-            step="1"
-            min="0"
-            defaultValue={model.laborMinutes ?? ""}
-            placeholder="5"
-            className={FIELD}
-          />
+        <Field
+          label="Labor (minutes)"
+          hint={
+            model.yieldUnits > 1
+              ? `Prep, clean and package time. Per plate divides by the ${model.yieldUnits} units below.`
+              : "Prep, clean and package time. Per plate divides by units per plate."
+          }
+        >
+          {/* Five minutes to de-support one keychain and five minutes to
+              de-support a plate of 52 keycaps are the same number and very
+              different costs, and nothing about the number says which. */}
+          <div className="flex items-center gap-2">
+            <input
+              name="labor_minutes"
+              type="number"
+              step="1"
+              min="0"
+              defaultValue={model.laborMinutes ?? ""}
+              placeholder="5"
+              className={`${FIELD_BASE} min-w-0 flex-1`}
+            />
+            <select
+              name="labor_basis"
+              aria-label="Labor basis"
+              defaultValue={model.laborBasis}
+              className={`${FIELD_BASE} w-32 shrink-0`}
+            >
+              <option value="part">per part</option>
+              <option value="plate">per plate</option>
+            </select>
+          </div>
         </Field>
         <Field
           label="Failure risk"
@@ -218,6 +257,34 @@ export function ModelEditor({
             min="0"
             defaultValue={model.markupPercent ?? ""}
             placeholder="50"
+            className={FIELD}
+          />
+        </Field>
+        <Field
+          label="Units per plate"
+          hint="How many finished pieces one sliced plate makes. Blank or 1 for a single-part plate."
+        >
+          <input
+            name="yield"
+            type="number"
+            step="1"
+            min="1"
+            defaultValue={model.yieldUnits > 1 ? model.yieldUnits : ""}
+            placeholder="1"
+            className={FIELD}
+          />
+        </Field>
+        <Field
+          label="Kit discount (%)"
+          hint="Off the pre-tax total, for a kit that sells below the sum of its parts."
+        >
+          <input
+            name="discount_percent"
+            type="number"
+            step="0.01"
+            min="0"
+            defaultValue={model.discountPercent ?? ""}
+            placeholder="0"
             className={FIELD}
           />
         </Field>

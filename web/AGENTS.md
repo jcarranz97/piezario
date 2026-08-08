@@ -48,6 +48,7 @@ components/
 ├── model/file-table.tsx         # downloads, grouped by kind
 ├── model/model-cost-card.tsx    # landed cost; lines expand to per-file breakdown
 ├── model/supplies-input.tsx     # repeatable {item, qty} rows for the editor
+├── model/components-input.tsx   # repeatable {model, qty, include} rows — kits
 ├── model/customizer.tsx         # "use client" — the Basic/Advanced parameter form
 ├── model/mesh-preview.tsx       # "use client" — three.js turntable over a generated STL
 └── layout/theme-toggle.tsx
@@ -62,6 +63,8 @@ lib/
 │                            #   (filaments, supplies, and the cost: settings)
 ├── cost.ts                  # per-file material+machine cost; machineRatePerHour()
 ├── model-cost.ts            # landed cost (materials+packaging+labor+machine), by out/ group
+├── kit-cost.ts              # prices a model's components: lines against the catalog
+├── components.ts            # the components: line shape + include set (pure — no fs)
 ├── customize-spec.ts        # the `customize:` frontmatter block (pure — no fs)
 ├── customize.ts             # reads a generator's params; validates a form → argv
 ├── customize-run.ts         # spawns a run, tracks it, caches by parameter hash
@@ -233,6 +236,52 @@ Three things are worth knowing before touching this:
   and the parser in `lib/config.ts`, write it in `lib/inventory-write.ts`,
   and surface it in the `filaments`/`supplies` browser. Model-side pricing
   reads through `lib/model-cost.ts`.
+
+## Composed Models (Kits)
+
+Any model may carry a `components:` list — other catalog models it contains,
+by slug and quantity — and be priced from them. A kit folder holds nothing
+but a `README.md`, which `walk()` already accepts as a model, so **the
+scanner needs no change**; what makes it a kit is the frontmatter, which is
+also where its `kit` capability badge comes from rather than from file kinds.
+
+`lib/kit-cost.ts` resolves those lines against the live catalog on every
+render — never a copy of a component's numbers, which would go stale the
+moment a spool price changed. Three rules hold the arithmetic together:
+
+- **A component brings its own margin.** Its cost joins the kit's `landed`
+  and its markup joins the kit's `profit`, so a price you back-solved on a
+  part survives being sold inside a kit. Tax is charged **once**, on the
+  whole pre-tax total — adding component *prices* by hand charges it twice.
+- **A component brings only what its line's `include:` allows.** The print
+  always; `supplies` and `labor` by default; `packaging` and `shipping`
+  only when asked, because a kit is bagged once and posted once.
+- **A plate is not a unit.** `yield: 52` on a model divides its filament and
+  machine cost, and — when `labor_basis: plate` — its labour too. Supplies,
+  packaging and shipping are per finished piece by their nature; labour is
+  the one that could be either, and only the author knows which, so it is
+  declared rather than guessed. `yield:` applies to that model's own card as
+  well, which is the point of declaring it there rather than on whoever
+  includes it.
+
+Constraints worth knowing before you touch this:
+
+- Resolution is **depth- and cycle-guarded** (`MAX_COMPONENT_DEPTH`,
+  `MAX_COMPONENT_MODELS`), and the cycle check runs *before* the memo, so a
+  cached clean result can never mask a loop.
+- `resolveComponents` takes the **already-walked index**. `getModel()` is a
+  full tree walk, so resolving seven parts by slug would pay for seven of
+  them; the detail page walks once via `cache(getModels)` and shares it.
+- The rollup does not depend on the parent's filament — each component uses
+  its own `cost_filament` — so it is resolved once and reused across every
+  entry in the parent's filament dropdown.
+- A component that cannot be priced gets a per-line `issue`, never silence:
+  `missing`, `cycle`, `depth`, `limit`, `no-print`, `unpriceable`,
+  `below-cost`. A too-low price must always look wrong.
+- `lib/components.ts` is **pure** (like `customize-spec.ts`) because the
+  editor's picker needs `COMPONENT_COST_PARTS` at runtime — importing that
+  value from `lib/catalog.ts` drags `node:fs` into the browser bundle and
+  fails the build.
 
 There are three sanctioned writers, and everything else stays read-only:
 `lib/write.ts` (a model's README), `lib/icons-import.ts` (a saved icon),

@@ -13,8 +13,13 @@ describe("getModels (against the fixture vault)", () => {
     expect(slugs).toEqual([
       "decor/vase",
       "gadgets/box",
+      "gadgets/plate",
       "keychains/pets/chispi",
       "keychains/ysisi-nametag",
+      "kits/loop-a",
+      "kits/loop-b",
+      "kits/plain",
+      "kits/starter-kit",
     ]);
     // Excluded category and the empty folder never appear.
     expect(slugs.some((s) => s.startsWith("scratch"))).toBe(false);
@@ -46,6 +51,44 @@ describe("getModels (against the fixture vault)", () => {
     expect(m.costFilament).toBe("pla-black");
     expect(m.date).toBe("2026-05-01");
     expect(m.cover).toBe("keychains/ysisi-nametag/cover.png");
+  });
+
+  it("reads component lines, with the include default and lenient quantities", () => {
+    const kit = bySlug("kits/starter-kit")!;
+    expect(kit.components).toEqual([
+      // No `include:` → supplies and labour, not packaging or shipping.
+      {
+        model: "keychains/ysisi-nametag",
+        qty: 2,
+        include: ["supplies", "labor"],
+      },
+      // An explicit empty list means the print only — it must not fall back.
+      { model: "gadgets/box", qty: 1, include: [] },
+      // A slug naming nothing stays put, to surface later as a missing line.
+      { model: "ghosts/nope", qty: 1, include: ["supplies", "labor"] },
+    ]);
+    expect(kit.discountPercent).toBe(10);
+  });
+
+  it("defaults components, yield and discount for a model that declares none", () => {
+    const plain = bySlug("kits/plain")!;
+    expect(plain.components).toEqual([]);
+    expect(plain.yieldUnits).toBe(1);
+    expect(plain.discountPercent).toBeNull();
+  });
+
+  it("reads yield and the labour basis, defaulting the basis to per part", () => {
+    expect(bySlug("gadgets/plate")!.yieldUnits).toBe(4);
+    expect(bySlug("gadgets/plate")!.laborBasis).toBe("plate");
+    // Every model that says nothing keeps the old meaning: minutes per piece.
+    expect(bySlug("keychains/ysisi-nametag")!.laborBasis).toBe("part");
+    expect(bySlug("kits/plain")!.laborBasis).toBe("part");
+  });
+
+  it("badges a composed model as a kit", () => {
+    // A kit folder holds only a README, so the badge can't come from files.
+    expect(bySlug("kits/starter-kit")!.capabilities).toContain("kit");
+    expect(bySlug("kits/plain")!.capabilities).not.toContain("kit");
   });
 
   it("derives a title and description when there is no frontmatter", () => {

@@ -46,6 +46,18 @@ describe("capabilitiesFor", () => {
   it("returns nothing when no kind implies a capability", () => {
     expect(capabilitiesFor(["image", "doc", "other"])).toEqual([]);
   });
+
+  it("badges a composed model as a kit, since no file extension can say so", () => {
+    // A kit folder holds only a README, so `kit` has to come from elsewhere.
+    expect(capabilitiesFor([], { composite: true })).toEqual(["kit"]);
+    expect(capabilitiesFor(["mesh"], { composite: true })).toEqual([
+      "printable",
+      "kit",
+    ]);
+    // Omitting the option must leave every existing call unchanged.
+    expect(capabilitiesFor(["mesh"], {})).toEqual(["printable"]);
+    expect(capabilitiesFor([], { composite: false })).toEqual([]);
+  });
 });
 
 describe("formatSize", () => {

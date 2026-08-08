@@ -3,6 +3,12 @@ import path from "node:path";
 
 import matter from "gray-matter";
 
+import {
+  type ComponentCostPart,
+  type ModelComponent,
+  COMPONENT_COST_PARTS,
+  DEFAULT_COMPONENT_INCLUDE,
+} from "./components";
 import { isExcluded, loadConfig, matchesPattern } from "./config";
 import { type CustomizeSpec, parseCustomizeSpec } from "./customize-spec";
 import {
@@ -58,6 +64,20 @@ export interface ModelSupply {
   qty: number;
 }
 
+// Component types and constants live in the pure `./components` module so the
+// editor's picker can import them without dragging `node:fs` into the browser.
+export type { ComponentCostPart, ModelComponent } from "./components";
+
+/**
+ * Whether `labor_minutes:` is time spent on **one finished piece** or on the
+ * **whole plate**.
+ *
+ * Five minutes of de-supporting is five minutes per keychain, but on a plate of
+ * 52 keycaps it is five minutes for all of them — a twentieth of a minute each.
+ * Which one it is cannot be derived from the number, so it is declared.
+ */
+export type LaborBasis = "part" | "plate";
+
 export interface Model {
   /** URL slug and unique id, e.g. "keychains/ysisi-nametag". */
   slug: string;
@@ -87,8 +107,13 @@ export interface Model {
   customize: CustomizeSpec | null;
   /** Failure-risk level (low/medium/high); its factor buffers the cost. */
   failureRisk: string | null;
-  /** Prep/clean/package time for this part, in minutes. */
+  /** Prep/clean/package time, in minutes. Per what, `laborBasis` says. */
   laborMinutes: number | null;
+  /**
+   * Whether `laborMinutes` is spent per finished piece or per whole plate.
+   * "plate" divides it by `yieldUnits`, exactly as filament and machine are.
+   */
+  laborBasis: LaborBasis;
   /** Packaging consumables (bag, box…) this part needs, from the supplies catalog. */
   packaging: ModelSupply[];
   /** Shipping fee for this part; overrides the global default. */
@@ -97,6 +122,19 @@ export interface Model {
   markupPercent: number | null;
   /** Preferred filament id to pre-select in the cost card's dropdown. */
   costFilament: string | null;
+  /** Models this one is composed of. Empty for a model that stands alone. */
+  components: ModelComponent[];
+  /**
+   * How many finished units one run of the sliced plate produces. A plate of 21
+   * keycaps is one print and 21 sellable things, so the filament and machine
+   * cost divide by this to get a unit price. 1 unless the README says otherwise.
+   */
+  yieldUnits: number;
+  /**
+   * Percent off the pre-tax total. A kit sells for less than the sum of its
+   * parts, and this is the knob for that. Null when there is no discount.
+   */
+  discountPercent: number | null;
   /** A LICENSE file sitting in the folder, if there is one. */
   licenseFile: LicenseFile | null;
   /** README body with the frontmatter stripped. Empty when there is no README. */
@@ -216,6 +254,69 @@ function asSupplies(value: unknown): ModelSupply[] {
     }
   }
   return out;
+}
+
+/** The `include:` on a component line, or the default when it says nothing. */
+function asIncludes(value: unknown): ComponentCostPart[] {
+  if (value === undefined || value === null) {
+    return [...DEFAULT_COMPONENT_INCLUDE];
+  }
+  const named = asList(value).map((part) => part.toLowerCase());
+  // An explicit empty list means "the print only" — keep it, don't fall back.
+  return COMPONENT_COST_PARTS.filter((part) => named.includes(part));
+}
+
+/**
+ * The `components:` frontmatter — a list of `{ model, qty, include }`, read with
+ * the same leniency as `asSupplies`: `model`/`item`/`slug` all name the
+ * component, `qty`/`count` both give the count, and a duplicated line adds up
+ * rather than overwriting (its `include` sets union, so the more generous line
+ * wins). The slug is *not* validated here — a model that has been renamed away
+ * must surface as a visible "missing" line in the cost card, not vanish.
+ */
+function asComponents(value: unknown): ModelComponent[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  const out: ModelComponent[] = [];
+  for (const raw of value) {
+    if (!raw || typeof raw !== "object") {
+      continue;
+    }
+    const row = raw as Record<string, unknown>;
+    const model = asString(row.model ?? row.item ?? row.slug);
+    const qty = Number(row.qty ?? row.count ?? 1);
+    if (!model || !Number.isFinite(qty) || qty <= 0) {
+      continue;
+    }
+    const include = asIncludes(row.include);
+    const existing = out.find(
+      (entry) => entry.model.toLowerCase() === model.toLowerCase(),
+    );
+    if (existing) {
+      existing.qty += qty;
+      existing.include = COMPONENT_COST_PARTS.filter(
+        (part) => existing.include.includes(part) || include.includes(part),
+      );
+    } else {
+      out.push({ model, qty, include });
+    }
+  }
+  return out;
+}
+
+/**
+ * The `yield:` frontmatter — units per plate. Anything unreadable or below one
+ * falls back to 1, so a typo can never divide a cost into nothing.
+ */
+function asYield(value: unknown): number {
+  const n = asNumber(value);
+  return n !== null && n >= 1 ? n : 1;
+}
+
+/** `labor_basis:` — per finished piece unless the README says per plate. */
+function asLaborBasis(value: unknown): LaborBasis {
+  return asString(value)?.toLowerCase() === "plate" ? "plate" : "part";
 }
 
 /** "ysisi-nametag" → "Ysisi nametag", for models with no frontmatter title. */
@@ -373,6 +474,8 @@ async function readModel(
     };
   }
 
+  const components = asComponents(data.components);
+
   return {
     slug: segments.join("/"),
     dirName: segments[segments.length - 1],
@@ -395,17 +498,23 @@ async function readModel(
     customize: parseCustomizeSpec(data.customize),
     failureRisk: asRiskLevel(data.failure_risk),
     laborMinutes: asNumber(data.labor_minutes),
+    laborBasis: asLaborBasis(data.labor_basis),
     packaging: asSupplies(data.packaging),
     // `packaging_cost` was the pre-split flat fee; read it as the shipping fee.
     shippingCost: asNumber(data.shipping_cost ?? data.packaging_cost),
     markupPercent: asNumber(data.markup_percent),
     costFilament: asString(data.cost_filament),
+    components,
+    yieldUnits: asYield(data.yield),
+    discountPercent: asNumber(data.discount_percent),
     licenseFile,
     body,
     hasReadme: Boolean(readme),
     files,
     kinds,
-    capabilities: capabilitiesFor(kinds),
+    // A model made of other models earns its badge from the frontmatter rather
+    // than from its files — a kit folder holds nothing but a README.
+    capabilities: capabilitiesFor(kinds, { composite: components.length > 0 }),
     cover: pickCover(files, asString(data.cover)),
     updatedAt,
   };
