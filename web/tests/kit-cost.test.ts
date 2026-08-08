@@ -48,6 +48,7 @@ function component(
   return {
     slug,
     title: slug,
+    cover: null,
     qty,
     include: ["supplies", "labor"],
     groupLabel: "Estimate",

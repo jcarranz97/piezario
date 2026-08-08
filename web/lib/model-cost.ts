@@ -50,6 +50,11 @@ export interface ResolvedComponent {
   slug: string;
   /** The component's title, or the slug when it could not be resolved. */
   title: string;
+  /**
+   * The component's cover image, models-relative — the same picture its card
+   * shows in the grid. Null when it has no image, or resolved to nothing.
+   */
+  cover: string | null;
   qty: number;
   /** Which of the component's per-part costs folded in. */
   include: ComponentCostPart[];
