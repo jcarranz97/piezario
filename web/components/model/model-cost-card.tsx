@@ -18,6 +18,7 @@ import {
   saveDiscountAction,
   saveMarkupAction,
 } from "@/actions/model.action";
+import { Thumb } from "@/components/common/thumb";
 import { SupplyThumb } from "@/components/supplies/supply-thumb";
 import { formatMoney } from "@/lib/cost";
 import type {
@@ -25,7 +26,7 @@ import type {
   ModelCostOption,
   ResolvedComponent,
 } from "@/lib/model-cost";
-import { modelUrl, supplyUrl } from "@/lib/urls";
+import { fileUrl, modelUrl, supplyUrl } from "@/lib/urls";
 
 const FIELD =
   "rounded-lg border border-[var(--card-border)] bg-transparent px-2 py-1 text-sm outline-none focus:border-[var(--accent)]";
@@ -460,13 +461,19 @@ function GroupCost({
   // Components: one line each, at cost. Their own margins ride in the profit
   // line below, which is why this figure is smaller than the sum of the prices
   // on their own cards.
+  // The cover picture rides along for the same reason a supply's photo does: a
+  // kit is a bag of small printed parts, and their names are far less
+  // recognisable than the things themselves.
   const componentBreakdown: Detail[] = componentLines.map((line) => ({
     name: (
-      <ComponentLink
-        slug={line.slug}
-        label={line.title}
-        missing={line.issue === "missing"}
-      />
+      <span className="flex min-w-0 items-center gap-2">
+        <Thumb src={line.cover ? fileUrl(line.cover) : null} size={20} />
+        <ComponentLink
+          slug={line.slug}
+          label={line.title}
+          missing={line.issue === "missing"}
+        />
+      </span>
     ),
     note: `${line.qty} ×`,
     amount: money(line.lineCost),

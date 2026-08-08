@@ -1,5 +1,4 @@
-import { LuImage } from "react-icons/lu";
-
+import { Thumb } from "@/components/common/thumb";
 import { supplyImageUrl } from "@/lib/urls";
 
 /**
@@ -9,8 +8,8 @@ import { supplyImageUrl } from "@/lib/urls";
  * breakdown, so a supply looks the same wherever it is named — which is the
  * whole point of the photo: `bolsa-de-celofan-5x3` is not a description.
  *
- * A plain `<img>` rather than `next/image`: these are local files served by
- * `/supply-files` with `no-store`, so the optimiser has nothing to add.
+ * The picture itself is `Thumb`; what this adds is the one thing specific to a
+ * supply — that the stored value is a bare filename under `/supply-files`.
  */
 export function SupplyThumb({
   image,
@@ -22,27 +21,11 @@ export function SupplyThumb({
   alt?: string;
   size?: number;
 }) {
-  const style = { width: size, height: size };
-
-  if (!image) {
-    return (
-      <div
-        aria-hidden
-        style={style}
-        className="flex shrink-0 items-center justify-center rounded-lg border border-dashed border-[var(--card-border)] text-muted"
-      >
-        <LuImage style={{ width: size / 3, height: size / 3 }} />
-      </div>
-    );
-  }
-
   return (
-    // eslint-disable-next-line @next/next/no-img-element
-    <img
-      src={supplyImageUrl(image)}
-      alt={alt ?? ""}
-      style={style}
-      className="shrink-0 rounded-lg border border-[var(--card-border)] object-cover"
+    <Thumb
+      src={image ? supplyImageUrl(image) : null}
+      alt={alt}
+      size={size}
     />
   );
 }
