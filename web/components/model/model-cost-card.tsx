@@ -16,6 +16,7 @@ import {
   openFileAction,
   saveCostFilamentAction,
   saveDiscountAction,
+  saveKitMarkupAction,
   saveMarkupAction,
 } from "@/actions/model.action";
 import { Thumb } from "@/components/common/thumb";
@@ -226,15 +227,25 @@ function PriceRow({
   pending,
   onSetMarkup,
   onSetDiscount,
+  onRaiseKit,
 }: {
   group: ModelCostGroup;
   currency: string;
   pending: boolean;
   onSetMarkup: (markupPercent: number) => void;
   onSetDiscount: (discountPercent: number) => void;
+  onRaiseKit: (markupPercent: number) => void;
 }) {
   const [editing, setEditing] = useState(false);
   const [value, setValue] = useState("");
+  // A kit priced above the sum of its parts waits here for a yes: the extra
+  // becomes profit, which is worth saying before it is written.
+  const [raise, setRaise] = useState<{
+    markupPercent: number;
+    extraProfit: number;
+    price: number;
+  } | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
 
   const { price, landed, taxPercent, componentsCost, componentsProfit } = group;
   // What this model adds on its own — the only part its markup can act on.
@@ -246,6 +257,8 @@ function PriceRow({
 
   function commit() {
     setEditing(false);
+    setRaise(null);
+    setNotice(null);
     const target = Number(value);
     if (!Number.isFinite(target) || target <= 0 || !adjustable) {
       return;
@@ -260,7 +273,25 @@ function PriceRow({
       if (preDiscount <= 0) {
         return;
       }
-      onSetDiscount(Math.max(0, (1 - total / preDiscount) * 100));
+      if (total <= preDiscount) {
+        onSetDiscount((1 - total / preDiscount) * 100);
+        return;
+      }
+      // Above the sum of its parts a discount would have to go negative. The
+      // extra is profit instead, carried by the kit's own markup on what it
+      // adds itself — the components keep theirs untouched.
+      if (ownLanded <= 0) {
+        setNotice(
+          "This kit adds no cost of its own, so there is nothing to mark up. Raise a component's price instead.",
+        );
+        return;
+      }
+      const ownProfit = total - landed - componentsProfit;
+      setRaise({
+        markupPercent: (ownProfit / ownLanded) * 100,
+        extraProfit: total - group.total,
+        price: target,
+      });
     } else {
       // price = landed × (1 + markup) × (1 + tax)  ⇒  solve for markup.
       onSetMarkup(Math.max(0, (total / ownLanded - 1) * 100));
@@ -268,55 +299,83 @@ function PriceRow({
   }
 
   return (
-    <div className="flex items-center gap-2 py-0.5">
-      <span className="font-semibold">Price</span>
-      <span className="ml-auto flex items-center gap-1">
-        {editing ? (
-          <span className="flex items-center">
-            <span className="text-muted">{currency}</span>
-            <input
-              type="number"
-              step="0.01"
-              min="0"
-              autoFocus
-              value={value}
-              onChange={(e) => setValue(e.target.value)}
-              onBlur={commit}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") {
-                  e.preventDefault();
-                  commit();
-                } else if (e.key === "Escape") {
-                  setEditing(false);
-                }
+    <>
+      <div className="flex items-center gap-2 py-0.5">
+        <span className="font-semibold">Price</span>
+        <span className="ml-auto flex items-center gap-1">
+          {editing ? (
+            <span className="flex items-center">
+              <span className="text-muted">{currency}</span>
+              <input
+                type="number"
+                step="0.01"
+                min="0"
+                autoFocus
+                value={value}
+                onChange={(e) => setValue(e.target.value)}
+                onBlur={commit}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    commit();
+                  } else if (e.key === "Escape") {
+                    setEditing(false);
+                  }
+                }}
+                className="w-20 rounded border border-[var(--accent)] bg-transparent px-1 py-0 text-right font-semibold tabular-nums outline-none"
+              />
+            </span>
+          ) : (
+            <button
+              type="button"
+              disabled={pending || !adjustable}
+              onClick={() => {
+                setValue(price.toFixed(2));
+                setEditing(true);
               }}
-              className="w-20 rounded border border-[var(--accent)] bg-transparent px-1 py-0 text-right font-semibold tabular-nums outline-none"
-            />
+              title={
+                !adjustable
+                  ? "Nothing to adjust — this has no cost to price from"
+                  : isKit
+                    ? "Click to set a target price; lower moves the kit discount, higher raises the kit's own markup"
+                    : "Click to set a target price; the markup is adjusted to match"
+              }
+              className="inline-flex items-center gap-1 font-semibold tabular-nums underline decoration-dotted decoration-muted underline-offset-4 hover:decoration-[var(--foreground)] disabled:opacity-60"
+            >
+              {formatMoney(price, currency)}
+              <LuPencil className="size-3 text-muted" />
+            </button>
+          )}
+        </span>
+        <span className="w-3.5 shrink-0" />
+      </div>
+      {raise && (
+        <div className="mt-1 flex flex-wrap items-center gap-2 rounded-lg border border-[var(--card-border)] px-2 py-1.5 text-xs">
+          <span className="min-w-0 flex-1">
+            {formatMoney(raise.price, currency)} is above the sum of the parts.
+            Your profit goes up by {formatMoney(raise.extraProfit, currency)}, as
+            a {raise.markupPercent.toFixed(2)}% markup on what the kit adds itself
+            {group.discount > 0 ? ", and the kit discount is removed" : ""}.
           </span>
-        ) : (
-          <button
-            type="button"
-            disabled={pending || !adjustable}
-            onClick={() => {
-              setValue(price.toFixed(2));
-              setEditing(true);
+          <Button
+            size="sm"
+            isPending={pending}
+            onPress={() => {
+              onRaiseKit(raise.markupPercent);
+              setRaise(null);
             }}
-            title={
-              !adjustable
-                ? "Nothing to adjust — this has no cost to price from"
-                : isKit
-                  ? "Click to set a target price; the kit discount is adjusted to match"
-                  : "Click to set a target price; the markup is adjusted to match"
-            }
-            className="inline-flex items-center gap-1 font-semibold tabular-nums underline decoration-dotted decoration-muted underline-offset-4 hover:decoration-[var(--foreground)] disabled:opacity-60"
           >
-            {formatMoney(price, currency)}
-            <LuPencil className="size-3 text-muted" />
-          </button>
-        )}
-      </span>
-      <span className="w-3.5 shrink-0" />
-    </div>
+            Confirm
+          </Button>
+          <Button size="sm" variant="secondary" onPress={() => setRaise(null)}>
+            Cancel
+          </Button>
+        </div>
+      )}
+      {notice && (
+        <p className="mt-1 text-xs text-[var(--accent-strong)]">{notice}</p>
+      )}
+    </>
   );
 }
 
@@ -331,6 +390,7 @@ function GroupCost({
   pending,
   onSetMarkup,
   onSetDiscount,
+  onRaiseKit,
   money,
 }: {
   group: ModelCostGroup;
@@ -342,6 +402,7 @@ function GroupCost({
   pending: boolean;
   onSetMarkup: (markupPercent: number) => void;
   onSetDiscount: (discountPercent: number) => void;
+  onRaiseKit: (markupPercent: number) => void;
   money: (value: number) => string;
 }) {
   // Turn resolved supply/packaging lines into breakdown rows (name · qty · cost).
@@ -667,6 +728,7 @@ function GroupCost({
           pending={pending}
           onSetMarkup={onSetMarkup}
           onSetDiscount={onSetDiscount}
+          onRaiseKit={onRaiseKit}
         />
       )}
     </div>
@@ -727,6 +789,20 @@ export function ModelCostCard({
     setError(null);
     startTransition(async () => {
       const result = await saveDiscountAction(slug, discountPercent);
+      if (result.error) {
+        setError(result.error);
+      } else {
+        router.refresh();
+      }
+    });
+  }
+
+  // A kit priced above its parts: the extra is the kit's own markup, and any
+  // discount goes in the same write.
+  function raiseKit(markupPercent: number) {
+    setError(null);
+    startTransition(async () => {
+      const result = await saveKitMarkupAction(slug, markupPercent);
       if (result.error) {
         setError(result.error);
       } else {
@@ -806,6 +882,7 @@ export function ModelCostCard({
             pending={pending}
             onSetMarkup={setMarkup}
             onSetDiscount={setDiscount}
+            onRaiseKit={raiseKit}
             money={money}
           />
         ))}

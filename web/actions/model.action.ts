@@ -263,6 +263,37 @@ export async function saveMarkupAction(
 }
 
 /**
+ * Raise a kit above the sum of its parts. The extra is profit on what the kit
+ * adds itself (its labor and supplies), so it is saved as the kit's own markup
+ * — and any discount goes in the same write, since a kit priced *up* is no
+ * longer selling below its parts.
+ */
+export async function saveKitMarkupAction(
+  slug: string,
+  markupPercent: number,
+): Promise<{ error: string | null }> {
+  try {
+    const value = Number.isFinite(markupPercent) && markupPercent >= 0
+      ? Math.round(markupPercent * 100) / 100
+      : 0;
+    await updateModelFrontmatter(slug, {
+      markup_percent: value,
+      discount_percent: "",
+    });
+    revalidatePath("/", "layout");
+    return { error: null };
+  } catch (error) {
+    if (error instanceof CatalogError) {
+      return { error: error.message };
+    }
+    return {
+      error:
+        error instanceof Error ? error.message : "Could not save the price.",
+    };
+  }
+}
+
+/**
  * Save the per-model discount — the kit counterpart of `saveMarkupAction`.
  *
  * A kit made only of other models has no cost of its own to mark up, so typing
