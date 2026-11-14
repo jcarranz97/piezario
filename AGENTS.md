@@ -123,6 +123,46 @@ the **real Next server** built with `output: "standalone"`, launched from
 runtime. The window loads `http://127.0.0.1:<port>`. Details in
 `desktop/AGENTS.md`.
 
+## The hosted web version (design phase)
+
+A **hosted, multi-tenant version** of Piezario is being designed under
+`docs/` — FastAPI + PostgreSQL + Next.js, mirroring the architecture of the
+`printforhelp` repo. It exists because two things a local folder cannot do
+became necessary: collaborators contributing designs without git, and paid
+access for buyers.
+
+Nothing in `web/` or `desktop/` changes yet. **This document stays
+authoritative for the desktop app**; `docs/` is authoritative for the hosted
+platform, where the filesystem stops being the schema and becomes an import
+format.
+
+**Vocabulary differs on purpose.** What this desktop app calls a **model**,
+the hosted platform calls a **`Project`** — the same folder, a wider scope.
+A project is usually one printable part, but it may also be a whole build
+with printed parts, hardware, electronics and firmware, so the domain
+entities avoid baking "3D" in: `Catalog`, `Project`, `ProjectFile`. The
+import format is unchanged — `models_dir` in `catalog.yaml` keeps its name,
+and a folder that is a model here becomes a Project there. The product name
+is also provisional and expected to change; renaming it must not require
+renaming the schema.
+
+| Doc | Purpose |
+|---|---|
+| [`docs/index.md`](docs/index.md) | Project intro |
+| [`docs/roadmap.md`](docs/roadmap.md) | Phased plan (Phase 0 = design) |
+| [`docs/requirements.md`](docs/requirements.md) | Full SRS — 268 FRs · 22 NFRs · 5 IRs |
+| [`docs/architecture/repository-layout.md`](docs/architecture/repository-layout.md) | Where the new code goes and why `web/` stays |
+| [`docs/architecture/backend.md`](docs/architecture/backend.md) | FastAPI domains, the three permission gates |
+| [`docs/architecture/frontend.md`](docs/architecture/frontend.md) | Next.js layers, httpOnly session, downloads |
+| [`docs/architecture/database-schema.md`](docs/architecture/database-schema.md) | PostgreSQL schema and its invariants |
+| [`docs/architecture/api-specification.md`](docs/architecture/api-specification.md) | REST surface, error codes, examples |
+| [`docs/architecture/catalog-sources.md`](docs/architecture/catalog-sources.md) | GitHub sync vs hosted upload, the geometry gap |
+| [`docs/architecture/access-control.md`](docs/architecture/access-control.md) | Entitlements, access codes, the download gate |
+| [`docs/architecture/cost-model.md`](docs/architecture/cost-model.md) | The pricing engine, ported and re-homed |
+| [`docs/architecture/desktop-client.md`](docs/architecture/desktop-client.md) | How this app becomes an API client |
+
+Serve them with `docker compose up docs` → <http://localhost:2013>.
+
 ## Key Constraints
 
 - **The filesystem is the schema.** Never introduce a database, a manifest, or a

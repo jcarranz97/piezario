@@ -24,3 +24,6 @@ __pycache__/
 *.py[cod]
 .venv/
 venv/
+
+# MkDocs build output
+site/

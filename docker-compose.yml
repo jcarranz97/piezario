@@ -1,0 +1,20 @@
+# Phase 0 compose file: the documentation site only.
+#
+# The `backend`, `postgres` and `frontend` services land in Phase 0's
+# scaffold step (see docs/roadmap.md). Until then this file exists so
+# `docker compose up docs` serves the design docs locally with live
+# reload, the same way they are served in the PrintForHelp repo.
+#
+#   docker compose up docs   →   http://localhost:2013
+
+services:
+  docs:
+    image: squidfunk/mkdocs-material:latest
+    container_name: piezario-docs
+    volumes:
+      - ./docs:/docs/docs
+      - ./mkdocs.yml:/docs/mkdocs.yml
+    ports:
+      - "2013:2013"
+    command: serve --dev-addr=0.0.0.0:2013
+    restart: unless-stopped
